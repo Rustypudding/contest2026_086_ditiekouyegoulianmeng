@@ -8,7 +8,7 @@
 
 - 赛道：AI 硬件产品创新
 - 硬件：Gemini-S1（全志 R528 / sun8iw20，128M NAND，单麦 + 喇叭 + LCD）
-- 应用版本：v2.54
+- 应用版本：v2.56
 
 ## 目录
 
@@ -34,7 +34,7 @@ contest2026_086_ditiekouyegoulianmeng.xml
 
 ### 一、直接烧预编译固件（最快）
 
-`image/kid_buddy_gemini-s1_uart0_128Mnand_v2.54.img` 是完整固件，用全志
+`image/kid_buddy_gemini-s1_uart0_128Mnand_v2.56.img` 是完整固件，用全志
 PhoenixSuit / LiveSuit 按常规流程烧进 NAND 即可。上电后 `rcS.nsh` 会自动拉起
 `kid_buddy`（图形界面）和 `ai_agent`（语音后台）。
 
@@ -108,7 +108,8 @@ cd vendor/allwinnertech/lichee
   `CONFIG_AI_AGENT_AUDIO_CAPTURE_GAIN=1` —— 单麦板子上增益必须是 1，用 Kconfig 默认的 6
   会把底噪放大几十倍，VAD 一路误触发，一直自己唤醒自己。
 - `boards/r528/r528s3-gemini-s1/src/etc/init.d/rcS.nsh`
-  开机拉起 `kid_buddy` 和 `ai_agent`。
+  开机拉起 `kid_buddy` 和 `ai_agent`。（开发期这里曾硬编码过一行 `date -s` 把系统时钟设到
+  一个固定日期，现在已经拿掉——设时钟改成由 kid_buddy 自己做了，见下面「已知限制」）
 - `chips/r528/drivers/rtos-hal/hal/source/sound/codecs/sun8iw20-codec.c`
   第二次打开播放设备时不再重复配 codec。重复配置会把 DAC 时钟打毛，表现是回复的第一句
   有声音、后面的追问全哑。
@@ -128,9 +129,17 @@ cd vendor/allwinnertech/lichee
   标点全部忽略，并同时认几个常见音译写法。**这套写法只做过离线单测，没在真机上对着
   真实 ASR 输出校准过** —— 如果喊不醒，日志里 `wake: heard "..."` 会打出原始转写，
   照着往里加一条即可。
-- 预编译固件是为交赛用本仓的板级配置从零编出来的一份完整镜像（不是开发过程中的旧产物），
-  并做了构造校验：`nsh.fex` 与 `vela.bin` 同为 5952464 字节，镜像里能查到版本号 `v2.54`、
-  内建名 `kid_buddy` 和 `rcS.nsh` 的启动行；直接对镜像二进制搜字符串，新唤醒词
-  （`你好openvela` / `哈喽openvela` / 音译 `欧本维拉` / `欧朋维拉`）都在，**旧唤醒词
-  「小伙伴」一次都不出现**。但**这一版没有在真机上重烧验证过**——开发过程中各功能版本
-  （v2.53 及以前）都是在真机上跑过的。
+- 预编译固件是为交赛用本仓的板级配置从零编出来的一份完整镜像（不是开发过程中的旧产物）。
+  当前版本 v2.56 修掉了两个**从真机串口日志里定位出来**的问题：板级配置里误开了
+  `CONFIG_LCD_FRAMEBUFFER`，导致 `/dev/lcd0` 从未注册、kid_buddy 拿不到显示设备而白屏；
+  以及板子没有 RTC、系统时钟停在 1970，导致 HTTPS 证书校验全失败（云端 LLM / ASR / TTS
+  集体没反应）。后者的修法是让 kid_buddy 启动时自己 `clock_settime`（NuttX 的 `date -s`
+  底下就是这个调用），并且只在时钟明显没设过的时候才写，**这样从源码编出来的固件也覆盖
+  得到** —— 原先这一步写在 vendor 的 `rcS.nsh` 里，只有本仓这份预编译镜像才带。
+- 对 v2.56 镜像做过的构造校验：`nsh.fex` 与 `vela.bin` 同为 5828112 字节且逐字节一致；
+  镜像里能查到版本号 `v2.56`、内建名 `kid_buddy`、以及新增的时钟种子代码；**内嵌的启动
+  脚本里已经不再有 `date -s`**；直接对镜像二进制搜字符串，新唤醒词（`你好openvela` /
+  音译 `欧本维拉`）都在，**旧唤醒词「小伙伴」一次都不出现**。
+  **白屏一项已在真机上复烧确认修复**（v2.55 上板：图形界面正常显示、版本号对得上）；
+  v2.56 是在这之上把时钟修复从板级脚本挪进了应用本身，**尚未上板复测**。开发过程中
+  各功能版本（v2.53 及以前）都是在真机上跑过的。
