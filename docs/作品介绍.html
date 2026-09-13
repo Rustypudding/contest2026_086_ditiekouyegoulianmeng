@@ -58,7 +58,7 @@ a { color: #1a6fb5; text-decoration: none; }
 </tr>
 <tr>
 <td>应用版本</td>
-<td>v2.54</td>
+<td>v2.56</td>
 </tr>
 </tbody>
 </table>
@@ -80,11 +80,11 @@ a { color: #1a6fb5; text-decoration: none; }
 <hr />
 <h2>二、怎么跑起来</h2>
 <h3>方式一：直接烧预编译固件（推荐）</h3>
-<pre><code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.54.img
+<pre><code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.56.img
 </code></pre>
 <p>用全志 PhoenixSuit / LiveSuit 按常规流程烧进 NAND。上电后启动脚本会自动拉起图形界面
 和语音后台，不需要再编任何东西。</p>
-<p>烧完屏幕上右上角会显示版本号（<code>v2.54</code>），可以用来确认新镜像确实生效了。</p>
+<p>烧完屏幕上右上角会显示版本号（<code>v2.56</code>），可以用来确认新镜像确实生效了。</p>
 <h3>方式二：从源码编</h3>
 <p>本仓自带完整的板级配置（<code>board/nsh_minidisplay/</code>），不需要另外改 <code>vendor</code> 树：</p>
 <pre><code class="language-bash">repo init -u https://github.com/open-vela/contest2026_086_ditiekouyegoulianmeng \
@@ -200,6 +200,21 @@ repo sync -c -j8
 <td>构建系统不跟踪头文件依赖，改过头文件后链接的是旧目标文件</td>
 <td>构建系统</td>
 </tr>
+<tr>
+<td>改过启动脚本、重编也报成功，行为却没变</td>
+<td>构建系统只把 <code>etc/init.d/rcS</code> 列为依赖，而它全部内容是 <code>#include &quot;rcS.nsh&quot;</code>，<code>rcS.nsh</code> 压根不在依赖表里，改它永远不触发重生成</td>
+<td>构建系统</td>
+</tr>
+<tr>
+<td>烧录后白屏，只有右下角一个橙色长方形</td>
+<td>板级配置里 <code>CONFIG_LCD_FRAMEBUFFER=y</code> 会让驱动的 <code>#if/#elif</code> 走 framebuffer 分支，<code>lcddev_register()</code> 成了死代码，<code>/dev/lcd0</code> 压根没注册出来</td>
+<td>板级配置</td>
+</tr>
+<tr>
+<td>配好网络和 APIKEY 之后毫无反应</td>
+<td>板子没有 RTC，系统时钟停在 1970，HTTPS 证书的 notBefore 校验全部失败</td>
+<td>系统 / 网络协议</td>
+</tr>
 </tbody>
 </table>
 <p>这些改动里，与 openvela 公共仓有关的部分都按大赛规则单独提了 PR，没有直接改本地副本。</p>
@@ -258,11 +273,19 @@ repo sync -c -j8
 <li><strong>上游 PR 尚未合入。</strong> 作品对 <code>packages_ai_agent</code> 和 <code>vendor_allwinnertech</code> 的改动
    已按规则提了 PR，但组委会的评审有 CODEOWNERS 闸门，参赛者无法自行合并。因此
    <strong>本仓的预编译固件是实际交付方式</strong>——镜像里已经包含了这些改动，烧录后功能是完整的。</li>
-<li><strong>预编译固件的验证程度。</strong> 交付镜像是用本仓的板级配置从零编出来的，做过构造校验：
-   分段长度一致、版本号 <code>v2.54</code> 与内建程序名在镜像里查得到；直接搜镜像二进制，
-   新唤醒词的几种写法都在、<strong>旧唤醒词「小伙伴」完全不出现</strong>。但<strong>本次交赛用的
-   这一版没有在真机上重新烧录验证</strong>。开发过程中的各功能版本（v2.53 及以前）都是在真机上
-   验证过的。</li>
+<li><strong>预编译固件的验证程度。</strong> 当前交付的 v2.56 修掉了两个<strong>从真机串口日志里定位出来</strong>
+   的问题（<code>/dev/lcd0</code> 未注册导致白屏、系统时钟停在 1970 导致 HTTPS 全部失败，见第四节）。
+   时钟这一条的具体修法是让 kid_buddy 启动时自己调 <code>clock_settime</code>（NuttX 的
+   <code>date -s</code> 底下就是这个调用），并且只在时钟明显没设过的时候才写，<strong>这样从源码编出来的
+   固件也覆盖得到</strong>——原先这一步写在 vendor 的 <code>rcS.nsh</code> 里，只有本仓这份预编译镜像才带。
+   <strong>白屏一项已在真机上复烧确认修复</strong>（v2.55 上板：图形界面正常显示、版本号对得上）。
+   镜像还做过构造校验：<code>nsh.fex</code> 与 <code>vela.bin</code> 同为 5828112 字节且逐字节一致；版本号
+   <code>v2.56</code>、内建程序名、以及新增的时钟种子代码在镜像里都查得到；<strong>内嵌的那份启动脚本里
+   已经不再有 <code>date -s</code></strong>；直接搜镜像二进制，新唤醒词的几种写法都在、<strong>旧唤醒词「小伙伴」
+   完全不出现</strong>。但 v2.56 相对 v2.55 只多改了时钟这一处，<strong>尚未上板复测</strong>；
+   <strong>语音链路（唤醒 → ASR → LLM → TTS）也没有在这一版上重新实测</strong>——唤醒词的匹配写法
+   只做过离线单测，没有对着真实 ASR 输出校准过。开发过程中的各功能版本（v2.53 及以前）
+   都是在真机上验证过的。</li>
 <li>服务端（LLM / ASR / TTS / MQTT broker）需要自行搭建，作品本身不含服务端。</li>
 </ol>
 <hr />

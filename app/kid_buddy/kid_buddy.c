@@ -32,6 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 #include <pthread.h>
 #include <syslog.h>
 #include <sys/boardctl.h>
@@ -118,7 +119,7 @@
  * glance which build is actually running on the board. Bump this every
  * time you rebuild + reflash, then check the screen to confirm the new
  * image took effect. */
-#define KID_BUDDY_VERSION  "v2.54"
+#define KID_BUDDY_VERSION  "v2.56"
 
 /****************************************************************************
  * Types
@@ -1930,6 +1931,56 @@ static void ui_show_role_select(void)
 }
 
 /****************************************************************************
+ * Seed the system clock
+ ****************************************************************************/
+
+/* This board has no RTC and nothing to read the time from at boot, so the
+ * clock starts out at 1970.  mbedTLS then rejects every server certificate
+ * on its notBefore check, and all the cloud calls (ASR / LLM / TTS) fail
+ * with nothing but a TLS error to show for it.  Since there is no real time
+ * source here, seed a fixed date instead -- but only while the clock is
+ * still obviously unset, so a later NTP sync is never stomped.
+ */
+
+static void seed_clock_if_unset(void)
+{
+    const time_t sane = 1600000000; /* 2020-09-13: anything older means unset */
+    struct timespec now;
+    struct timespec ts;
+    struct tm tm;
+    time_t when;
+
+    if (clock_gettime(CLOCK_REALTIME, &now) == 0 && now.tv_sec >= sane)
+      {
+        syslog(LOG_INFO, "[kid_buddy] clock already sane, leaving it alone\n");
+        return;
+      }
+
+    memset(&tm, 0, sizeof(tm));
+    tm.tm_year  = 2026 - 1900;
+    tm.tm_mon   = 9 - 1;           /* September */
+    tm.tm_mday  = 10;
+    tm.tm_hour  = 12;
+    tm.tm_isdst = 0;
+
+    /* Same conversion NSH's own `date -s` does, so the value matches what
+     * the boot script used to hardcode. */
+
+    when = mktime(&tm);
+
+    ts.tv_sec  = when;
+    ts.tv_nsec = 0;
+
+    if (when < 0 || clock_settime(CLOCK_REALTIME, &ts) < 0)
+      {
+        syslog(LOG_ERR, "[kid_buddy] clock seed failed: %d\n", errno);
+        return;
+      }
+
+    syslog(LOG_INFO, "[kid_buddy] no RTC, clock seeded to %s", ctime(&when));
+}
+
+/****************************************************************************
  * Public Functions
  ****************************************************************************/
 
@@ -1937,6 +1988,11 @@ int main(int argc, char *argv[])
 {
     lv_nuttx_dsc_t info;
     lv_nuttx_result_t result;
+
+    /* Both the display backend and the AI daemon need a sane clock, so do
+     * this before anything else comes up. */
+
+    seed_clock_if_unset();
 
     if (lv_is_initialized())
       {

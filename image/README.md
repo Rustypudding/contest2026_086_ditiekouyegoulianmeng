@@ -4,8 +4,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| `kid_buddy_gemini-s1_uart0_128Mnand_v2.54.img` | Gemini-S1（全志 R528）NAND 整机镜像，应用版本 `v2.54` |
-| `kid_buddy_gemini-s1_uart0_128Mnand_v2.54.img.sha256` | 上者的 SHA256 校验和 |
+| `kid_buddy_gemini-s1_uart0_128Mnand_v2.56.img` | Gemini-S1（全志 R528）NAND 整机镜像，应用版本 `v2.56` |
+| `kid_buddy_gemini-s1_uart0_128Mnand_v2.56.img.sha256` | 上者的 SHA256 校验和 |
 
 ## 镜像内容
 
@@ -29,5 +29,5 @@
 ## 校验
 
 ```bash
-sha256sum -c kid_buddy_gemini-s1_uart0_128Mnand_v2.54.img.sha256
+sha256sum -c kid_buddy_gemini-s1_uart0_128Mnand_v2.56.img.sha256
 ```
