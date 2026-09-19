@@ -22,7 +22,7 @@ board/nsh_minidisplay/
 image/             预编译整机固件 + SHA256
 phone-app/         家长端控制台（单文件网页，MQTT over WebSocket，板子零改动）
 logs/              AI Coding 对话日志
-docs/              作品介绍、演示视频脚本、上游 PR 备忘
+docs/              技术报告、作品介绍、演示视频脚本、上游 PR 备忘
 .claude/skills/    开发过程中沉淀的 4 个 Skill
 contest2026_086_ditiekouyegoulianmeng.xml
                    manifest，把 app/kid_buddy 软链进编译树
