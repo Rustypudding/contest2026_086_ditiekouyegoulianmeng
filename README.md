@@ -24,15 +24,18 @@ phone-app/         家长端控制台（单文件网页，MQTT over WebSocket，
 logs/              AI Coding 对话日志
 docs/              技术报告、作品介绍、演示视频脚本、上游 PR 备忘
 .claude/skills/    开发过程中沉淀的 4 个 Skill
+upstream/          两个上游仓改动过的文件成品，由 manifest 覆盖回工作区
 contest2026_086_ditiekouyegoulianmeng.xml
-                   manifest，把 app/kid_buddy 软链进编译树
+                   manifest，把 app/kid_buddy 软链进编译树、把 upstream/ 覆盖回上游仓
 ```
 
 `app/kid_buddy` 经 manifest 的 `<linkfile>` 软链到 `packages/demos/contest2026_086_kid_buddy`，
 再由 openvela 的 `Make.defs` 通配和 `mkkconfig` 自动发现 —— 不用把代码拷进生产仓的目录树。
 
-作品对 `packages/ai_agent` 和 `vendor/allwinnertech` 确实有功能改动，但都走 PR，不直接
-改这两个仓的本地副本，见下面「上游依赖」和「板级改动」。
+作品对 `packages/ai_agent` 和 `vendor/allwinnertech` 有功能改动。改动过的文件成品放在
+本仓 `upstream/` 下，由 manifest 在 `repo sync` 时覆盖回这两个仓的工作区 —— 所以
+`repo status` 里这两个 project 显示 modified 是正常的，不是脏。见下面「上游依赖」和
+「板级改动」。
 
 ## 跑起来
 
@@ -62,6 +65,11 @@ repo sync -c -j8
 # 在工作区根目录
 ./build.sh contest2026_086_ditiekouyegoulianmeng/board/nsh_minidisplay
 ```
+
+`repo sync` 结束时 manifest 会做两件事：把 `app/kid_buddy` 软链到
+`packages/demos/contest2026_086_kid_buddy`，把 `upstream/` 下的 42 个文件覆盖回
+`packages/ai_agent/` 和 `vendor/allwinnertech/`（覆盖出来的文件是只读的，这是 `repo`
+的行为）。所以这两步之后不需要再手工打补丁，直接 `build.sh`。
 
 `build.sh` 会拿板级 defconfig 覆盖 `.config` 后全量编译，结束时再把它写回那个目录。
 
@@ -103,17 +111,27 @@ cd vendor/allwinnertech/lichee
 | [#35](https://github.com/open-vela/packages_ai_agent/pull/35) | rpg：流式工具调用、会话隔离用的 `chat_id`、本地客户端关掉回复缓存 |
 | [#36](https://github.com/open-vela/packages_ai_agent/pull/36) | cli：`speak` / `thinking` 命令、MQTT 儿童上报、启动幂等 |
 
-**只编译本仓的话，4 个里只有 #35 是硬依赖。** `app/kid_buddy` 用到
-`velaclaw_ask_req_t.chat_id`、`velaclaw_publish()`、`velaclaw_set_notify_callback()`
-三个符号，都由 #35 引入；少了 #35 会链接失败。另外三个不加也能编过，只是语音和提醒
-链路不完整。
+`app/kid_buddy` 用到 `velaclaw_ask_req_t.chat_id`、`velaclaw_publish()`、
+`velaclaw_set_notify_callback()` 三个符号，都由 #35 引入。少了 #35 连编都编不过。
 
-上游评审有 CODEOWNERS 闸门，参赛者合不了自己的 PR。截至交赛时这 4 个 PR 都还在排队，
-所以**以 `image/` 里的预编译固件为准**。
+上游评审有 CODEOWNERS 闸门，参赛者合不了自己的 PR —— 截至交赛这 4 个 PR 都还在排队。
+所以 `openvela.xml` 里 `packages/ai_agent` 走默认分支时是拿不到这些改动的。**本仓不
+依赖上游合并**：`upstream/ai_agent/` 下放着改动过的 39 个文件的成品，manifest 用
+`<copyfile>` 在 `repo sync` 时按原路径覆盖回 `packages/ai_agent/`。`repo sync` 之后的
+树和 `image/` 里那份固件是同源的，直接编就行。
+
+> 这里必须是 `<copyfile>`，不能换成 `<linkfile>`。linkfile 在目标位置已经有同名普通
+> 文件时不会覆盖 —— repo 的 `removedirs()` 只清 symlink 和空目录，碰到普通文件就停下，
+> 结果只在日志里留一行 `error: Cannot symlink ...`，树里躺的还是上游原文件。这 39 个
+> 目标里有 35 个是上游本来就有的文件，用 linkfile 会静默失效。
+
+PR 合进上游之后，`upstream/ai_agent/` 和 manifest 里对应的 `<copyfile>` 就可以删掉了。
 
 ## 板级改动
 
-`vendor/allwinnertech` 改了 3 个文件：
+`vendor/allwinnertech` 改了 3 个文件（成品同样在 `upstream/vendor_allwinnertech/` 下，
+由 manifest 覆盖回工作区，对应 PR
+[#21](https://github.com/open-vela/vendor_allwinnertech/pull/21)）：
 
 - `boards/r528/r528s3-gemini-s1/configs/nsh_minidisplay/defconfig`
   打开 LVGL、CJK 字体、MQTT、NTP/DHCP 等；关键是

@@ -98,5 +98,6 @@ velaclaw_ask_req_t.chat_id、velaclaw_publish()、velaclaw_set_notify_callback()
 - 首次向这些仓提 PR 会跑 `cla/signature`。CLA 已经用 `dokipudding@outlook.com`
   签过了；如果新 PR 又卡这个检查，在 PR 下评论 `/check-cla` 触发复检，不用重建 PR。
 - 生产仓有 CODEOWNERS 闸门，**我们自己合不了**。放着就行，不要一直等。
-- 交赛截止前这些 PR 没合入也不影响提交——`.img` 才是实际交付方式，上游 PR 是
-  获奖后按要求再做。
+- 交赛截止前这些 PR 没合入也不影响提交，也不影响从源码编——改动过的 42 个文件的成品
+  随队伍仓 `upstream/` 交付，manifest 用 `<copyfile>` 在 `repo sync` 时覆盖回工作区。
+  上游合了对应 PR 之后，把那些 `<copyfile>` 和 `upstream/` 下对应的文件删掉即可。

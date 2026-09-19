@@ -507,8 +507,9 @@ repo sync -c -j8
    （含正例和不该唤醒的负例），但<strong>没有针对真实 ASR 输出做过大规模校准</strong>——日志里会
    打印原始转写，遇到没覆盖的写法加一条即可。</li>
 <li><strong>上游 PR 尚未合入。</strong> 作品对 <code>packages_ai_agent</code> 和 <code>vendor_allwinnertech</code> 的改动
-   已按规则提了 PR，但组委会的评审有 CODEOWNERS 闸门，参赛者无法自行合并。因此
-   <strong>本仓的预编译固件是实际交付方式</strong>——镜像里已经包含了这些改动，烧录后功能是完整的。</li>
+   已按规则提了 PR，但组委会的评审有 CODEOWNERS 闸门，参赛者无法自行合并。<strong>这不影响
+   交付</strong>：改动过的 42 个文件的成品放在本仓 <code>upstream/</code> 下，manifest 在 <code>repo sync</code>
+   时覆盖回工作区，所以「直接烧 <code>image/</code> 里的固件」和「从源码编」两条路都完整可用。</li>
 <li><strong>预编译固件的验证程度较低。</strong> 这条单独放在下面 6.1 说清楚。</li>
 <li>服务端（LLM / ASR / TTS / MQTT broker）需要自行搭建，作品本身不含服务端。</li>
 </ol>

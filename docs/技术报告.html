@@ -469,6 +469,13 @@ CJK 16.00 px，但常见的「U+2000 以上是全角」是错的——实际有 
 </tr>
 </tbody>
 </table>
+<p>上游评审有 CODEOWNERS 闸门，参赛者无法自行合并，截至交赛这 5 个 PR 都仍在评审队列中。
+为使作品<strong>不依赖上游合并即可从源码构建</strong>，<code>packages/ai_agent</code> 的 39 个文件与
+<code>vendor/allwinnertech</code> 的 3 个文件的成品随本仓 <code>upstream/</code> 目录交付，manifest 通过
+<code>&lt;copyfile&gt;</code> 在 <code>repo sync</code> 结束后按原路径覆盖回对应工作区。因此 <code>repo sync</code> 得到的树
+与 <code>image/</code> 内固件的源码状态一致。此处使用 <code>&lt;copyfile&gt;</code> 而非 <code>&lt;linkfile&gt;</code>：后者在目标
+位置已存在同名普通文件时不会覆盖（<code>repo</code> 的 <code>removedirs()</code> 只清理符号链接与空目录，
+遇到普通文件即停止），仅打印一行错误日志，工作区中保留的仍是上游原文件。</p>
 <p>给 openvela 的改进建议（都来自这块板子上真实踩到的坑）：</p>
 <ol>
 <li><strong>构建系统不跟踪头文件依赖。</strong> 改过 <code>.h</code> 之后链接的是旧目标文件，症状是结构体字段
@@ -496,10 +503,13 @@ CJK 16.00 px，但常见的「U+2000 以上是全角」是错的——实际有 
 <p>这样分层的好处是：应用侧完全不碰 LLM / 工具 / 会话的实现，只做「把设备状态翻译成表情」
 和「把孩子的语音接进框架」两件事。</p>
 <p>app 目录经队伍仓 manifest 的 <code>&lt;linkfile&gt;</code> 映射到 openvela 工程的
-<code>packages/demos/contest2026_086_kid_buddy</code>，<strong>生产仓零改动</strong>，编译流程与官方 demo 一致。</p>
+<code>packages/demos/contest2026_086_kid_buddy</code>，<strong>生产仓零改动</strong>，编译流程与官方 demo 一致。
+对 <code>packages/ai_agent</code> 与 <code>vendor/allwinnertech</code> 的功能改动，以文件成品的形式放在本仓
+<code>upstream/</code> 下，由 manifest 的 <code>&lt;copyfile&gt;</code> 在 <code>repo sync</code> 时覆盖回工作区（见 3.3.3）。</p>
 <pre><code>contest2026_086_ditiekouyegoulianmeng/
 ├── app/kid_buddy/        应用主体（kid_buddy.c + 板级配置 + 技能设计稿）
 ├── board/nsh_minidisplay/ 板级 defconfig
+├── upstream/             两个上游仓改动过的 42 个文件的成品
 ├── image/                预编译固件（.img + sha256）
 ├── docs/                 技术报告、作品介绍、演示视频脚本
 ├── phone-app/            家长端网页（MQTT over WebSocket）
@@ -1073,7 +1083,9 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 <li>三项 openvela 核心能力全部落地：图形（LVGL 脸谱界面）、AI（ai_agent 的 Agent 循环 /
   工具调用 / Skill / 会话与记忆）、多媒体（ALSA 采集与播放）。</li>
 <li>在真机上定位并修复 16 个跨层问题，其中对公共仓的修复已提 PR：
-  <code>packages_ai_agent</code> #33 / #34 / #35 / #36、<code>vendor_allwinnertech</code> #21。</li>
+  <code>packages_ai_agent</code> #33 / #34 / #35 / #36、<code>vendor_allwinnertech</code> #21。这 5 个 PR
+  尚未合入，对应的文件成品随本仓 <code>upstream/</code> 交付并由 manifest 覆盖回工作区，因此
+  <strong>源码路径不依赖上游合并</strong>，<code>repo sync</code> 之后即可直接构建。</li>
 <li>界面在 v2.64–v2.67 之间完成四次迭代，v2.67 已在真机上逐条验证通过。</li>
 </ul>
 <h4>3.7.2 应用前景与商业价值</h4>
