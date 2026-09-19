@@ -1,0 +1,597 @@
+/*
+ * Copyright (C) 2026 Xiaomi Corporation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * This file contains code derived from MimiClaw (https://github.com/memovai/mimiclaw)
+ * Copyright (c) 2026 Ziboyan Wang, licensed under the MIT License.
+ * See NOTICE file for the original MIT License terms.
+ */
+
+#include "tools/skill_loader.h"
+#include "tools/tool_registry.h"
+#include "agent_config.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+static const char *TAG = "skills";
+
+/* ── Built-in skill contents ─────────────────────────────────── */
+
+#define BUILTIN_WEATHER \
+    "# Weather\n" \
+    "\n" \
+    "Get current weather and forecasts using web_search.\n" \
+    "\n" \
+    "## When to use\n" \
+    "When the user asks about weather, temperature, or forecasts.\n" \
+    "\n" \
+    "## How to use\n" \
+    "1. Use get_current_time to know the current date\n" \
+    "2. Use web_search with a query like \"weather in [city] today\"\n" \
+    "3. Extract temperature, conditions, and forecast from results\n" \
+    "4. Present in a concise, friendly format\n" \
+    "\n" \
+    "## Example\n" \
+    "User: \"What's the weather in Tokyo?\"\n" \
+    "→ get_current_time\n" \
+    "→ web_search \"weather Tokyo today February 2026\"\n" \
+    "→ \"Tokyo: 8°C, partly cloudy. High 12°C, low 4°C. Light wind from the north.\"\n"
+
+#define BUILTIN_DAILY_BRIEFING \
+    "# Daily Briefing\n" \
+    "\n" \
+    "Compile a personalized daily briefing for the user.\n" \
+    "\n" \
+    "## When to use\n" \
+    "When the user asks for a daily briefing, morning update, or \"what's new today\".\n" \
+    "Also useful as a heartbeat/cron task.\n" \
+    "\n" \
+    "## How to use\n" \
+    "1. Use get_current_time for today's date\n" \
+    "2. Read " AGENT_MEMORY_DIR "/MEMORY.md for user preferences and context\n" \
+    "3. Read today's daily note if it exists\n" \
+    "4. Use web_search for relevant news based on user interests\n" \
+    "5. Compile a concise briefing covering:\n" \
+    "   - Date and time\n" \
+    "   - Weather (if location known from USER.md)\n" \
+    "   - Relevant news/updates based on user interests\n" \
+    "   - Any pending tasks from memory\n" \
+    "   - Any scheduled cron jobs\n" \
+    "\n" \
+    "## Format\n" \
+    "Keep it brief — 5-10 bullet points max. Use the user's preferred language.\n"
+
+#define BUILTIN_SKILL_CREATOR \
+    "# Skill Creator\n" \
+    "\n" \
+    "Create new skills for AI Agent.\n" \
+    "\n" \
+    "## When to use\n" \
+    "When the user asks to create a new skill, teach the bot something, or add a new capability.\n" \
+    "\n" \
+    "## How to create a skill\n" \
+    "1. Choose a short, descriptive name (lowercase, hyphens ok)\n" \
+    "2. Write a SKILL.md file with this structure:\n" \
+    "   - `# Title` — clear name\n" \
+    "   - Brief description paragraph\n" \
+    "   - `## When to use` — trigger conditions\n" \
+    "   - `## How to use` — step-by-step instructions\n" \
+    "   - `## Example` — concrete example (optional but helpful)\n" \
+    "3. Save to `" AGENT_SKILLS_DIR "<name>.md` using write_file\n" \
+    "4. The skill will be automatically available after the next conversation\n" \
+    "\n" \
+    "## Best practices\n" \
+    "- Keep skills concise — the context window is limited\n" \
+    "- Focus on WHAT to do, not HOW (the agent is smart)\n" \
+    "- Include specific tool calls the agent should use\n" \
+    "- Test by asking the agent to use the new skill\n" \
+    "\n" \
+    "## Example\n" \
+    "To create a \"translate\" skill:\n" \
+    "write_file path=\"" AGENT_SKILLS_DIR "translate.md\" content=\"# Translate\\n\\nTranslate text between languages.\\n\\n" \
+    "## When to use\\nWhen the user asks to translate text.\\n\\n" \
+    "## How to use\\n1. Identify source and target languages\\n" \
+    "2. Translate directly using your language knowledge\\n" \
+    "3. For specialized terms, use web_search to verify\\n\"\n"
+
+#define BUILTIN_SYSTEM_HEALTH \
+    "# System Health Check\n\n" \
+    "Check AI Agent system status and summarize key info.\n\n" \
+    "## When to use\n" \
+    "When user asks about system status, health check, or running state.\n\n" \
+    "## How to use\n" \
+    "1. get_current_time to get current time\n" \
+    "2. list_dir to list /data/agent/ files\n" \
+    "3. read_file /data/agent/config/config.json to check config\n" \
+    "4. cron_list to check scheduled tasks\n" \
+    "5. Summarize: time, file count, config status, cron jobs\n"
+
+#define BUILTIN_REMINDER \
+    "# Reminder\n\n" \
+    "Set timed reminders that auto-notify the user.\n\n" \
+    "## When to use\n" \
+    "When user says remind me, set alarm, notify me later.\n\n" \
+    "## How to use\n" \
+    "1. get_current_time for current epoch\n" \
+    "2. Parse user request into schedule_type and timing\n" \
+    "3. Do NOT set channel, chat_id, report_channel or report_chat_id — the system fills them in automatically. A reminder from a remote parent channel (MQTT/Feishu/WebSocket/WeChat) is spoken on the device to the child, and the child's confirmation is reported back to the parent. An on-device voice request is spoken on the device only.\n" \
+    "4. cron_add to create the job. Do NOT set action or action_args — leave them empty; a plain reminder just sends the message at trigger time.\n" \
+    "5. Confirm with trigger time\n"
+
+#define BUILTIN_NOTE_TAKER \
+    "# Note Taker\n\n" \
+    "Quick notes saved to daily diary files.\n\n" \
+    "## When to use\n" \
+    "ONLY when user explicitly asks to take a note, save a memo, or record something.\n" \
+    "Do NOT auto-save notes for other tasks (weather, search, etc.).\n\n" \
+    "## How to use\n" \
+    "1. get_current_time for today's date\n" \
+    "2. Path: " AGENT_DATA_DIR "/memory/daily/YYYY-MM-DD.md\n" \
+    "3. read_file to check if today's diary exists\n" \
+    "4. If exists: edit_file to append. If not: write_file to create\n" \
+    "5. Format: - [HH:MM] content\n"
+
+#define BUILTIN_TRANSLATE \
+    "# Translate\n\n" \
+    "Translate text between languages.\n\n" \
+    "## When to use\n" \
+    "When user asks to translate text.\n\n" \
+    "## How to use\n" \
+    "1. Identify source and target languages\n" \
+    "2. Translate using language knowledge\n" \
+    "3. For specialized terms, use web_search to verify\n" \
+    "4. Provide translation with key term notes if needed\n"
+
+#define BUILTIN_NEWS_DIGEST \
+    "# News Digest\n\n" \
+    "Search and compile news summaries based on user interests.\n\n" \
+    "## When to use\n" \
+    "When user asks about recent news, headlines, or latest updates on a topic.\n\n" \
+    "## How to use\n" \
+    "1. get_current_time for current date\n" \
+    "2. Determine search keywords from user request or MEMORY.md interests\n" \
+    "3. news_search for relevant news (top_headlines=true for headlines)\n" \
+    "4. web_search to supplement if needed\n" \
+    "5. Compile 3-5 items: title, source, one-line summary\n"
+
+#define BUILTIN_FEISHU_TEST \
+    "# Feishu Integration Test\n\n" \
+    "Test Feishu Bot capabilities end-to-end.\n\n" \
+    "## When to use\n" \
+    "When user says test feishu, feishu test, or verify feishu connection.\n\n" \
+    "## How to use\n" \
+    "Run these tests in sequence, report each result:\n" \
+    "1. get_current_time - verify time\n" \
+    "2. get_weather location=Beijing - verify weather\n" \
+    "3. write_file + read_file a test file - verify file I/O\n" \
+    "4. read_file " AGENT_DATA_DIR "/memory/MEMORY.md - verify memory\n" \
+    "5. cron_list - verify cron\n" \
+    "6. Summarize all results with pass/fail status\n"
+
+#define BUILTIN_TASK_MANAGER \
+    "# Task Manager\n\n" \
+    "Manage a TODO list with add, complete, and view.\n\n" \
+    "## When to use\n" \
+    "When user says add task, TODO, done with X, what's pending.\n\n" \
+    "## How to use\n" \
+    "Task file: " AGENT_DATA_DIR "/TASKS.md\n" \
+    "- View: read_file the task file\n" \
+    "- Add: get_current_time, then edit_file/write_file to append: - [ ] [YYYY-MM-DD] desc\n" \
+    "- Complete: edit_file to change - [ ] to - [x]\n"
+
+#define BUILTIN_STORY_RPG \
+    "# Story RPG (文字冒险游戏)\n" \
+    "\n" \
+    "陪小朋友玩分支剧情的文字冒险/角色扮演游戏：讲背景故事，给2-3个选项，小朋友语音选择，剧情按选择发展并继续给选项，直到结局。\n" \
+    "\n" \
+    "## When to use\n" \
+    "当小朋友说“我们来玩冒险游戏/角色扮演/角色扮演游戏/讲故事游戏/文字RPG/编故事”，或想听故事并且自己决定剧情走向时，触发本技能。\n" \
+    "\n" \
+    "## How to use\n" \
+    "1. 进入游戏：先用一句话确认开始，讲清故事背景（2-3句，含主角、场景、目标）。\n" \
+    "2. 每轮输出：先讲一小段剧情发展（1-3句），然后用一句自然的口语把2-3个选项说清楚，例如“你想钻进树洞，还是爬上树屋，或者沿着小路走？”。千万不要用“A. B. C.”这种生硬标签，也不要写“选项1/选项2”。\n" \
+    "3. 等小朋友语音选择：他们可能说“选第一个”“第二个”“我要钻树洞”“走小路”，也可能复述选项内容，要根据意思正确对应到某个选项，不要强迫他们报字母或编号。\n" \
+    "4. 按选择推进剧情，再自然地给出下一组选项，如此循环，剧情要有悬念和变化。\n" \
+    "5. 结局：剧情自然收尾时给完整结局，并问“还想再玩一次吗？”。\n" \
+    "6. 退出：小朋友说“退出游戏/不玩了/结束”时停止游戏，回到默认角色。\n" \
+    "\n" \
+    "## Rules (重要)\n" \
+    "- 游戏期间你是“故事主持人”，可临时取代用户消息里[SYSTEM]默认角色的人设，专心讲好故事。\n" \
+    "- 全程简体中文，语气亲切，适合6-12岁孩子。\n" \
+    "- 每轮回复简短（适合语音朗读），不要一次讲太长，不要用表情符号。\n" \
+    "- 选项要用完整句子自然带出，让小朋友听一遍就懂，不要在句末堆一串字母。\n" \
+    "- 记住剧情进展：上一轮的选项与选择结果在历史消息里，续写时保持一致，不要前后矛盾。\n" \
+    "- 剧情健康、积极、无暴力恐怖。\n" \
+    "\n" \
+    "## Example\n" \
+    "小朋友：“我们来玩冒险游戏！”\n" \
+    "→ “好呀！你是一位住在魔法森林里的小探险家。今天森林里的小动物都睡着了，只有你能唤醒它们。现在你面前有一条岔路，你想走进发光的山洞，还是爬上高高的树屋，或者沿着小溪往前走呢？”\n"
+
+/* Built-in skill registry */
+typedef struct {
+    const char *filename;   /* e.g. "weather" */
+    const char *content;
+} builtin_skill_t;
+
+static const builtin_skill_t s_builtins[] = {
+    { "weather",        BUILTIN_WEATHER        },
+    { "daily-briefing", BUILTIN_DAILY_BRIEFING },
+    { "skill-creator",  BUILTIN_SKILL_CREATOR  },
+    { "system-health",  BUILTIN_SYSTEM_HEALTH  },
+    { "reminder",       BUILTIN_REMINDER       },
+    { "note-taker",     BUILTIN_NOTE_TAKER     },
+    { "translate",      BUILTIN_TRANSLATE      },
+    { "news-digest",    BUILTIN_NEWS_DIGEST    },
+    { "feishu-test",    BUILTIN_FEISHU_TEST    },
+    { "task-manager",   BUILTIN_TASK_MANAGER   },
+    { "story-rpg",      BUILTIN_STORY_RPG      },
+};
+
+#define NUM_BUILTINS (sizeof(s_builtins) / sizeof(s_builtins[0]))
+
+/* ── Install built-in skills if missing ──────────────────────── */
+
+static void install_builtin(const builtin_skill_t *skill)
+{
+    char path[128];
+    snprintf(path, sizeof(path), "%s%s.md", AGENT_SKILLS_DIR, skill->filename);
+
+    /* Built-in skills are the curated source of truth: always (re)write them
+     * so an edit to the built-in text (e.g. the story-rpg phrasing) takes
+     * effect on the next boot even though the .md already exists on disk.
+     * User-authored skills created via skill-creator live under their own
+     * filenames and are not affected. */
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        syslog(LOG_ERR, "[%s] Cannot write skill: %s\n", TAG, path);
+        return;
+    }
+
+    fputs(skill->content, f);
+    fclose(f);
+    syslog(LOG_INFO, "[%s] Installed built-in skill: %s\n", TAG, path);
+}
+
+int skill_loader_init(void)
+{
+    syslog(LOG_INFO, "[%s] Initializing skills system\n", TAG);
+
+    /* Ensure skills directory exists */
+    mkdir(AGENT_SKILLS_DIR, 0755);
+
+    for (size_t i = 0; i < NUM_BUILTINS; i++) {
+        install_builtin(&s_builtins[i]);
+    }
+
+    syslog(LOG_INFO, "[%s] Skills system ready (%d built-in)\n", TAG, (int)NUM_BUILTINS);
+    return OK;
+}
+
+/* ── Build skills summary for system prompt ──────────────────── */
+
+/**
+ * Parse first line as title: expects "# Title"
+ * Returns pointer past "# " or the line itself if no prefix.
+ */
+static const char *extract_title(const char *line, size_t len, char *out, size_t out_size)
+{
+    const char *start = line;
+    if (len >= 2 && line[0] == '#' && line[1] == ' ') {
+        start = line + 2;
+        len -= 2;
+    }
+
+    /* Trim trailing whitespace/newline */
+    while (len > 0 && (start[len - 1] == '\n' || start[len - 1] == '\r' || start[len - 1] == ' ')) {
+        len--;
+    }
+
+    size_t copy = len < out_size - 1 ? len : out_size - 1;
+    memcpy(out, start, copy);
+    out[copy] = '\0';
+    return out;
+}
+
+/**
+ * Extract description: text between the first line and the first blank line.
+ */
+static void extract_description(FILE *f, char *out, size_t out_size)
+{
+    size_t off = 0;
+    char line[256];
+
+    while (fgets(line, sizeof(line), f) && off < out_size - 1) {
+        size_t len = strlen(line);
+
+        /* Stop at blank line or section header */
+        if (len == 0 || (len == 1 && line[0] == '\n') ||
+            (len >= 2 && line[0] == '#' && line[1] == '#')) {
+            break;
+        }
+
+        /* Skip leading blank lines */
+        if (off == 0 && line[0] == '\n') continue;
+
+        /* Trim trailing newline for concatenation */
+        if (line[len - 1] == '\n') {
+            line[len - 1] = ' ';
+        }
+
+        size_t copy = len < out_size - off - 1 ? len : out_size - off - 1;
+        memcpy(out + off, line, copy);
+        off += copy;
+    }
+
+    /* Trim trailing space */
+    while (off > 0 && out[off - 1] == ' ') off--;
+    out[off] = '\0';
+}
+
+/**
+ * Append a formatted line at off, keeping off inside [0, size - 1].
+ *
+ * snprintf returns the length it *would* have written, so the common
+ * "off += snprintf(buf + off, size - off, ...)" pattern overshoots size the
+ * moment a line is truncated. Every later (size - off) then underflows
+ * size_t into a huge value, and the writes run off the end of the buffer.
+ * Callers must take the returned offset instead of adding snprintf's return
+ * themselves; on truncation it stops at size - 1 so the trailing NUL is
+ * always in bounds.
+ */
+static size_t append_bounded(char *buf, size_t size, size_t off, const char *fmt, ...)
+{
+    if (size == 0) {
+        return 0;
+    }
+
+    if (off >= size - 1) {
+        return size - 1;   /* already full — refuse, stay in bounds */
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + off, size - off, fmt, ap);
+    va_end(ap);
+
+    if (n < 0) {
+        return off;        /* encoding error, nothing written */
+    }
+
+    if ((size_t)n >= size - off) {
+        return size - 1;   /* truncated */
+    }
+
+    return off + (size_t)n;
+}
+
+/** Skill files are non-hidden *.md entries in the skills directory. */
+static bool is_skill_md(const char *name)
+{
+    size_t len = strlen(name);
+
+    if (len < 4 || name[0] == '.') {
+        return false;
+    }
+
+    return strcmp(name + len - 3, ".md") == 0;
+}
+
+size_t skill_loader_build_summary(char *buf, size_t size)
+{
+    if (size == 0) {
+        return 0;
+    }
+
+    /*
+     * On Vela/NuttX we have real directories, so we can simply opendir
+     * on the skills directory and iterate over .md files.
+     * (Original version used flat namespace readdir from mount root.)
+     */
+    DIR *dir = opendir(AGENT_SKILLS_DIR);
+    if (!dir) {
+        syslog(LOG_WARNING, "[%s] Cannot open skills directory for enumeration: %s\n", TAG, AGENT_SKILLS_DIR);
+        buf[0] = '\0';
+        return 0;
+    }
+
+    size_t off = 0;
+    bool truncated = false;
+    struct dirent *ent;
+
+    while ((ent = readdir(dir)) != NULL && off + 1 < size) {
+        const char *name = ent->d_name;
+
+        if (!is_skill_md(name)) continue;
+
+        /* Build full path */
+        char full_path[256];
+        snprintf(full_path, sizeof(full_path), "%s%s", AGENT_SKILLS_DIR, name);
+
+        FILE *f = fopen(full_path, "r");
+        if (!f) continue;
+
+        /* Read first line for title */
+        char first_line[128];
+        if (!fgets(first_line, sizeof(first_line), f)) {
+            fclose(f);
+            continue;
+        }
+
+        char title[64];
+        extract_title(first_line, strlen(first_line), title, sizeof(title));
+
+        /* Read description (until blank line) */
+        char desc[256];
+        extract_description(f, desc, sizeof(desc));
+        fclose(f);
+
+        /* Append to summary */
+        size_t next = append_bounded(buf, size, off,
+            "- **%s**: %s (read with: read_file %s)\n",
+            title, desc, full_path);
+        if (next >= size - 1) {
+            truncated = true;
+            off = size - 1;
+            break;
+        }
+        off = next;
+    }
+
+    closedir(dir);
+
+    buf[off] = '\0';   /* off <= size - 1, always in bounds */
+
+    if (truncated) {
+        syslog(LOG_WARNING,
+               "[%s] Skills summary truncated at %d bytes — the list no longer "
+               "fits the caller's buffer\n", TAG, (int)off);
+    }
+
+    syslog(LOG_INFO, "[%s] Skills summary: %d bytes\n", TAG, (int)off);
+    return off;
+}
+
+size_t skill_loader_list_names(char *buf, size_t size)
+{
+    if (size == 0) {
+        return 0;
+    }
+
+    DIR *dir = opendir(AGENT_SKILLS_DIR);
+    if (!dir) {
+        buf[0] = '\0';
+        return 0;
+    }
+
+    size_t off = 0;
+    bool truncated = false;
+    struct dirent *ent;
+
+    while ((ent = readdir(dir)) != NULL && off + 1 < size) {
+        const char *name = ent->d_name;
+
+        if (!is_skill_md(name)) continue;
+
+        char full_path[256];
+        snprintf(full_path, sizeof(full_path), "%s%s", AGENT_SKILLS_DIR, name);
+
+        FILE *f = fopen(full_path, "r");
+        if (!f) continue;
+
+        char first_line[128];
+        if (!fgets(first_line, sizeof(first_line), f)) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+
+        char title[64];
+        extract_title(first_line, strlen(first_line), title, sizeof(title));
+
+        /* Names only, comma-separated — this string is spoken aloud and shown
+         * on the LCD, so no descriptions and no file paths. */
+        size_t next = append_bounded(buf, size, off, off > 0 ? "、%s" : "%s", title);
+        if (next >= size - 1) {
+            truncated = true;
+            off = size - 1;
+            break;
+        }
+        off = next;
+    }
+
+    closedir(dir);
+
+    buf[off] = '\0';
+
+    if (truncated) {
+        syslog(LOG_WARNING, "[%s] Skill name list truncated at %d bytes\n",
+               TAG, (int)off);
+    }
+
+    return off;
+}
+
+/* ── Hot-reload support ──────────────────────────────────────── */
+
+static uint32_t s_last_skill_hash;
+
+/* Simple hash of directory listing: file count + total size */
+static uint32_t compute_skills_hash(void)
+{
+    DIR *dir = opendir(AGENT_SKILLS_DIR);
+    if (!dir) {
+        return 0;
+    }
+
+    uint32_t hash = 5381;
+    struct dirent *ent;
+
+    while ((ent = readdir(dir)) != NULL) {
+        const char *name = ent->d_name;
+        size_t name_len = strlen(name);
+
+        if (name_len < 4 || strcmp(name + name_len - 3, ".md") != 0) {
+            continue;
+        }
+        if (name[0] == '.') {
+            continue;
+        }
+
+        /* Hash filename */
+        for (size_t i = 0; i < name_len; i++) {
+            hash = ((hash << 5) + hash) + (unsigned char)name[i];
+        }
+
+        /* Hash file size + mtime (detects content changes) */
+        char path[256];
+        snprintf(path, sizeof(path), "%s%s", AGENT_SKILLS_DIR, name);
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            hash = ((hash << 5) + hash) + (uint32_t)st.st_size;
+            hash = ((hash << 5) + hash) + (uint32_t)st.st_mtime;
+        }
+    }
+
+    closedir(dir);
+    return hash;
+}
+
+bool skill_loader_check_changed(void)
+{
+    uint32_t current = compute_skills_hash();
+    if (s_last_skill_hash == 0) {
+        s_last_skill_hash = current;
+        return false;
+    }
+    if (current != s_last_skill_hash) {
+        s_last_skill_hash = current;
+        return true;
+    }
+    return false;
+}
+
+void skill_loader_refresh(void)
+{
+    s_last_skill_hash = compute_skills_hash();
+    /* Invalidate tool registry so next get_tools_json rebuilds */
+    tool_registry_invalidate();
+    syslog(LOG_INFO, "[%s] Skills refreshed (hash=%08x)\n",
+        TAG, s_last_skill_hash);
+}

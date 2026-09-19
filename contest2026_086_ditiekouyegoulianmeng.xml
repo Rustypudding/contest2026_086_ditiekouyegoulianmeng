@@ -3,13 +3,74 @@
   <!--
     Team repo manifest. Includes the full openvela base project set
     (openvela.xml in this same repo) and adds this team repo as a self-ref
-    project, exposing its work-form subdirectories to openvela working-tree
-    locations via <linkfile>. remote/default come from the included openvela.xml.
+    project, exposing its subdirectories to openvela working-tree locations.
+    remote/default come from the included openvela.xml.
   -->
   <include name="openvela.xml"/>
 
   <project path="contest2026_086_ditiekouyegoulianmeng" name="contest2026_086_ditiekouyegoulianmeng">
     <!-- kid_buddy: AI 儿童陪伴应用（本队作品主体） -->
     <linkfile src="app/kid_buddy" dest="packages/demos/contest2026_086_kid_buddy"/>
+
+    <!--
+      上游依赖：本作品对 packages/ai_agent 和 vendor/allwinnertech 的功能改动，
+      两个上游仓的 PR 都还在评审队列里（CODEOWNERS 闸门，参赛者合不了自己的 PR），
+      而 openvela.xml 里这两个 project 没有 pin revision，走的是 openvela 默认分支。
+      所以这里把改动过的文件用 <copyfile> 覆盖到工作区里，让 repo sync 之后的树
+      就等于我们出固件用的那棵树 —— 直接 repo init / repo sync / build.sh 就能编。
+
+      必须是 <copyfile>，不能换成 <linkfile>：linkfile 在目标位置已经存在同名
+      普通文件时不会覆盖（repo 的 removedirs() 只清 symlink 和空目录，遇到普通
+      文件就停下），链接失败只在日志里报一行 error，树里留的还是上游原文件。
+      这 42 个目标里有 38 个是上游本来就有的文件，用 linkfile 会静默失效。
+
+      文件内容是这两个仓合入我们 PR 之后的状态；PR 合了就可以把这份删掉。
+    -->
+
+    <!-- ==== packages/ai_agent（39 个文件）==== -->
+    <copyfile src="upstream/ai_agent/Kconfig" dest="packages/ai_agent/Kconfig"/>
+    <copyfile src="upstream/ai_agent/Makefile" dest="packages/ai_agent/Makefile"/>
+    <copyfile src="upstream/ai_agent/include/agent_config.h" dest="packages/ai_agent/include/agent_config.h"/>
+    <copyfile src="upstream/ai_agent/include/velaclaw/client.h" dest="packages/ai_agent/include/velaclaw/client.h"/>
+    <copyfile src="upstream/ai_agent/include/voice/voice_tts.h" dest="packages/ai_agent/include/voice/voice_tts.h"/>
+    <copyfile src="upstream/ai_agent/src/agent_main.c" dest="packages/ai_agent/src/agent_main.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/cmd_voice.c" dest="packages/ai_agent/src/channels/cmd_voice.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/cmd_voice.h" dest="packages/ai_agent/src/channels/cmd_voice.h"/>
+    <copyfile src="upstream/ai_agent/src/channels/mqtt_channel.c" dest="packages/ai_agent/src/channels/mqtt_channel.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/nsh_commands.c" dest="packages/ai_agent/src/channels/nsh_commands.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/nsh_commands.h" dest="packages/ai_agent/src/channels/nsh_commands.h"/>
+    <copyfile src="upstream/ai_agent/src/core/agent_loop.c" dest="packages/ai_agent/src/core/agent_loop.c"/>
+    <copyfile src="upstream/ai_agent/src/core/agent_mem.h" dest="packages/ai_agent/src/core/agent_mem.h"/>
+    <copyfile src="upstream/ai_agent/src/core/context_builder.c" dest="packages/ai_agent/src/core/context_builder.c"/>
+    <copyfile src="upstream/ai_agent/src/core/message_bus.h" dest="packages/ai_agent/src/core/message_bus.h"/>
+    <copyfile src="upstream/ai_agent/src/infra/cron_service.c" dest="packages/ai_agent/src/infra/cron_service.c"/>
+    <copyfile src="upstream/ai_agent/src/infra/cron_service.h" dest="packages/ai_agent/src/infra/cron_service.h"/>
+    <copyfile src="upstream/ai_agent/src/infra/vela_tls.c" dest="packages/ai_agent/src/infra/vela_tls.c"/>
+    <copyfile src="upstream/ai_agent/src/infra/vela_tls.h" dest="packages/ai_agent/src/infra/vela_tls.h"/>
+    <copyfile src="upstream/ai_agent/src/llm/llm_cache.c" dest="packages/ai_agent/src/llm/llm_cache.c"/>
+    <copyfile src="upstream/ai_agent/src/llm/llm_proxy.c" dest="packages/ai_agent/src/llm/llm_proxy.c"/>
+    <copyfile src="upstream/ai_agent/src/llm/llm_proxy.h" dest="packages/ai_agent/src/llm/llm_proxy.h"/>
+    <copyfile src="upstream/ai_agent/src/sdk/velaclaw_client_local.c" dest="packages/ai_agent/src/sdk/velaclaw_client_local.c"/>
+    <copyfile src="upstream/ai_agent/src/tools/skill_loader.c" dest="packages/ai_agent/src/tools/skill_loader.c"/>
+    <copyfile src="upstream/ai_agent/src/tools/skill_loader.h" dest="packages/ai_agent/src/tools/skill_loader.h"/>
+    <copyfile src="upstream/ai_agent/src/tools/tool_cron.c" dest="packages/ai_agent/src/tools/tool_cron.c"/>
+    <copyfile src="upstream/ai_agent/src/tools/tool_get_time.c" dest="packages/ai_agent/src/tools/tool_get_time.c"/>
+    <copyfile src="upstream/ai_agent/src/tools/tool_get_time.h" dest="packages/ai_agent/src/tools/tool_get_time.h"/>
+    <copyfile src="upstream/ai_agent/src/tools/tool_registry.c" dest="packages/ai_agent/src/tools/tool_registry.c"/>
+    <copyfile src="upstream/ai_agent/src/ui/lvgl_ui_channel.c" dest="packages/ai_agent/src/ui/lvgl_ui_channel.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/audio_capture.c" dest="packages/ai_agent/src/voice/audio_capture.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/audio_playback.c" dest="packages/ai_agent/src/voice/audio_playback.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/mimo_asr.c" dest="packages/ai_agent/src/voice/mimo_asr.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/mimo_asr.h" dest="packages/ai_agent/src/voice/mimo_asr.h"/>
+    <copyfile src="upstream/ai_agent/src/voice/mimo_tts.c" dest="packages/ai_agent/src/voice/mimo_tts.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/mimo_tts.h" dest="packages/ai_agent/src/voice/mimo_tts.h"/>
+    <copyfile src="upstream/ai_agent/src/voice/voice_channel.c" dest="packages/ai_agent/src/voice/voice_channel.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/voice_tts.c" dest="packages/ai_agent/src/voice/voice_tts.c"/>
+    <copyfile src="upstream/ai_agent/src/voice/volc_tts.c" dest="packages/ai_agent/src/voice/volc_tts.c"/>
+
+    <!-- ==== vendor/allwinnertech（3 个文件）==== -->
+    <copyfile src="upstream/vendor_allwinnertech/boards/r528/r528s3-gemini-s1/configs/nsh_minidisplay/defconfig" dest="vendor/allwinnertech/boards/r528/r528s3-gemini-s1/configs/nsh_minidisplay/defconfig"/>
+    <copyfile src="upstream/vendor_allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/init.d/rcS.nsh" dest="vendor/allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/init.d/rcS.nsh"/>
+    <copyfile src="upstream/vendor_allwinnertech/chips/r528/drivers/rtos-hal/hal/source/sound/codecs/sun8iw20-codec.c" dest="vendor/allwinnertech/chips/r528/drivers/rtos-hal/hal/source/sound/codecs/sun8iw20-codec.c"/>
   </project>
 </manifest>
