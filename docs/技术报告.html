@@ -262,6 +262,41 @@ LCD + 触屏决定了交互可以用一张脸 + 四条书签带完成。它同�
 道具。状态按优先级阶梯判定：ASR 退避 → 出错难过 → 提醒铃铛 → 上报成功 → 主动搭话挥手
 → 正在听（音量弧）→ 识别中 → 说话中（开合嘴）→ 思考中 → 没听清 → 无网络（困倦）→
 待机。动画按状态分配帧预算（见 3.5.2），待机时每 tick 一个 LVGL 调用都不发。</p>
+<p><strong>（6）各节点的角色与运行的系统。</strong> 本作品是一个三节点的方案，但<strong>只有板子在跑
+openvela</strong>，另两个节点刻意做成了零安装：</p>
+<table>
+<thead>
+<tr>
+<th>节点</th>
+<th>跑在哪</th>
+<th>承担什么</th>
+<th>为什么这么分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>设备端</td>
+<td>Gemini-S1 / <strong>openvela</strong>（NuttX）</td>
+<td>全部实时动作：脸谱界面、VAD 采集、唤醒匹配、TTS 播放、会话与剧情落盘、定时任务执行</td>
+<td>实时性（100 ms 级）和断网可用性都要求它在本地</td>
+</tr>
+<tr>
+<td>家长端</td>
+<td>手机 / 电脑<strong>浏览器</strong>，一个单文件 H5</td>
+<td>看孩子与设备的往来、给孩子设提醒</td>
+<td>不装 App、不上应用商店，扫开即用；它只是个 MQTT 客户端</td>
+</tr>
+<tr>
+<td>云侧</td>
+<td>Xiaomi MiMo</td>
+<td>ASR / 对话 / TTS 三个接口</td>
+<td>端侧算力与内存放不下可用的模型</td>
+</tr>
+</tbody>
+</table>
+<p>家长端和板子之间只隔着 MQTT（topic <code>agent/in</code> / <code>agent/out</code>），用的就是 ai_agent 原有
+的入站 / 出站格式（<code>{"type":"message","content":…,"chat_id":…}</code>），<strong>板子这一侧的代码
+一行没改</strong>。也就是说，将来要换成手机原生 App、或者接一个智能音箱，设备端还是不用动。</p>
 <h3>3.3 核心算法与技术原理</h3>
 <h4>3.3.1 AI 算法实现</h4>
 <p><strong>端侧模型：不部署。</strong> 板子的内存与算力预算放不下一个可用的语音或语言模型，所以端侧
