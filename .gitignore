@@ -18,3 +18,10 @@ out/
 *.elf
 *.hex
 *.map
+
+# 文档流水线中间产物（html -> odt -> docx / pdf，odt 是中间步）
+*.odt
+
+# 只交付 v2.67 一份固件，v2.60~v2.66 的七份历史镜像留在本地当退路（每份 27 MB）
+image/kid_buddy_gemini-s1_uart0_128Mnand_v2.6[0-6].img
+image/kid_buddy_gemini-s1_uart0_128Mnand_v2.6[0-6].img.sha256
