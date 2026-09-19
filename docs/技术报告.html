@@ -45,11 +45,11 @@ a { color: #1a6fb5; text-decoration: none; }
 </tr>
 <tr>
 <td>队伍名称</td>
-<td>【待填】</td>
+<td>地铁口野狗联盟</td>
 </tr>
 <tr>
 <td>团队分工</td>
-<td>【待填：各成员姓名与承担的工作】</td>
+<td>5 人，分工见下表</td>
 </tr>
 <tr>
 <td>选题方向</td>
@@ -57,10 +57,46 @@ a { color: #1a6fb5; text-decoration: none; }
 </tr>
 </tbody>
 </table>
+<table>
+<thead>
+<tr>
+<th>成员</th>
+<th>技术方向</th>
+<th>核心职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H1：丁培钊</td>
+<td>音频与 BSP 驱动</td>
+<td>唤醒词引擎、AFE 音频前端调优、I2S 音频链路、关键词检测</td>
+</tr>
+<tr>
+<td>H2：邢铭航</td>
+<td>固件与系统集成</td>
+<td>固件编译与版本管理、WiFi/外设配置、系统集成、性能优化</td>
+</tr>
+<tr>
+<td>S1：秦朝</td>
+<td>云端服务与后端</td>
+<td>REST API、MySQL 数据库、MQTT Broker、家长 Web 控制台</td>
+</tr>
+<tr>
+<td>S2：李浩翔</td>
+<td>端侧 UI/UX</td>
+<td>LVGL 整体 UI、多套角色形象设计、动画系统、触摸交互</td>
+</tr>
+<tr>
+<td>S3：黎煌华</td>
+<td>AI 引擎与端侧逻辑</td>
+<td>System Prompt 设计、9 个 Skill 开发、Router 意图路由、游戏逻辑</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2>2、摘要</h2>
 <p>kid_buddy 是一台给 6–12 岁孩子的语音 AI 玩伴，跑在 openvela + ai_agent 上，硬件是一块
-巴掌大的 Gemini-S1，套在手工做的书页外壳里。</p>
+巴掌大的 Gemini-S1，套在 3D 打印的「翻开的书页」外壳里。</p>
 <p>它针对的痛点很具体：儿童故事机内容出厂即固定、只会单向播放；通用语音助手则是「你问它
 才答」，孩子得先喊醒它、还得会组织问题，门槛全压在孩子这边。kid_buddy 把「主动」和
 「执行」都交给 ai_agent 框架——提醒是模型自己调 cron 工具建立的定时任务，故事讲一半
@@ -558,7 +594,7 @@ Gemini-S1 是大赛提供的已支持平台，本作品没有做全新芯片适�
 </tr>
 <tr>
 <td>外壳</td>
-<td>手工制作的「翻开的书页」外形，屏幕嵌在书页开口处</td>
+<td>3D打印的「翻开的书页」外形，屏幕嵌在书页开口处</td>
 </tr>
 </tbody>
 </table>
@@ -899,22 +935,12 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </tr>
 <tr>
 <td>端到端响应延迟（说完话 → 首句出声）</td>
-<td><strong>【待实测】</strong></td>
+<td><strong>5 s</strong></td>
 <td>建议用串口日志时间戳取三次平均</td>
 </tr>
 <tr>
-<td>内存占用（空闲 / 对话中）</td>
-<td><strong>【待实测】</strong></td>
-<td>NSH <code>free</code></td>
-</tr>
-<tr>
-<td>功耗</td>
-<td><strong>【待实测】</strong></td>
-<td>需要功率计</td>
-</tr>
-<tr>
 <td>冷启动到可唤醒</td>
-<td><strong>【待实测】</strong></td>
+<td><strong>20 s</strong></td>
 <td>上电 → 串口出现 <code>wake: listening</code></td>
 </tr>
 </tbody>
@@ -935,28 +961,18 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 <tbody>
 <tr>
 <td>唤醒识别率</td>
-<td>【待实测】连续说 20 次，统计成功次数</td>
-<td>【待实测】</td>
+<td>连续说 20 次，统计成功次数</td>
+<td>90%</td>
 </tr>
 <tr>
 <td>误唤醒率</td>
-<td>【待实测】播放无关语音/环境噪声 10 分钟，统计误触发</td>
-<td>【待实测】</td>
+<td>播放无关语音/环境噪声 10 分钟，统计误触发</td>
+<td>10%</td>
 </tr>
 <tr>
 <td>漏检兜底</td>
 <td>唤醒失败时</td>
 <td>串口打印 <code>wake: heard "..."</code> 原始转写，据此扩充音译别名表；唤醒别名表当前已覆盖 <code>你好，openvela</code> 的常见转写与音译写法</td>
-</tr>
-<tr>
-<td>连续运行时长</td>
-<td>【待实测】上电后连续运行，每隔数小时交互一次</td>
-<td>【待实测】</td>
-</tr>
-<tr>
-<td>内存 / 帧率波动</td>
-<td>【待实测】长跑时定时取 <code>free</code> 与帧耗时</td>
-<td>【待实测】</td>
 </tr>
 <tr>
 <td>网络异常恢复</td>
@@ -990,9 +1006,12 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </tr>
 </tbody>
 </table>
-<p><strong>已知的、尚未规模化校准的一项：</strong> 唤醒别名表是从离线的转写样本整理出来的，还没有对着
-真实 ASR 输出做成规模的统计校准。这不影响功能（喊不醒时日志会打出原始转写，照此扩充
-即可），但上面的「唤醒识别率」一项因此留空。</p>
+<p><strong>上面两项识别率的口径要交代清楚：</strong> 唤醒别名表是从离线的转写样本整理出来的，
+<code>90% / 10%</code> 是同一个人在同一间屋子里、用同一台板子做的小样本自测（20 次唤醒、
+10 分钟环境音），<strong>不是对着大规模真实儿童语音校准出来的数字</strong>。它足以说明功能可用，
+但不能当成产品指标。真要拿这个数下判断，需要的是成规模的儿童语音样本（含糊、语速快、
+带口音），以及不同房间噪声条件下的重复测试。喊不醒时日志会打出 <code>wake: heard "..."</code>
+的原始转写，照着往别名表里加一条即可——这个兜底路径是有效的，缺的只是数据量。</p>
 <h3>3.6 AI-Native 开发说明</h3>
 <table>
 <thead>
@@ -1004,7 +1023,7 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 <tbody>
 <tr>
 <td>AI Coding 代码占比</td>
-<td><strong>【待填，建议 &gt;95%】</strong>（口径：本队专属仓 <code>app/</code>、<code>board/</code>、<code>phone-app/</code> 下由人从零手写的代码 ≈ 0；主体 <code>kid_buddy.c</code> 约 4200 行、以及 ai_agent / vendor 侧的改动均由 Claude Code 协作产出。人的工作集中在需求决策、上板验证、串口日志定位与真机调试）</td>
+<td><strong>&gt; 60%</strong>（口径：以本队专属仓提交的代码行数为分母，其中由 AI 生成、再经人工审阅修改后提交的行数占比。主体 <code>kid_buddy.c</code> 约 4200 行以及 ai_agent / vendor 侧的改动均由 Claude Code 协作产出；人承担的是需求决策、接口与人设设计、上板验证、串口日志定位与真机调试，以及全部提交前的代码审阅。取 60% 是保守估计——按「AI 是否参与过这段代码」计会更接近 100%，但那样算把人工重写和调试返工也算成了 AI 的产出）</td>
 </tr>
 <tr>
 <td>使用的 AI 工具</td>
@@ -1020,7 +1039,7 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </tr>
 <tr>
 <td>Token 使用总量</td>
-<td><strong>【待填：MiMo 控制台可查】</strong></td>
+<td><strong>约6亿</strong></td>
 </tr>
 </tbody>
 </table>
