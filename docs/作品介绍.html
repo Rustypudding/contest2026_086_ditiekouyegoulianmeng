@@ -454,10 +454,11 @@ repo sync -c -j8
 <p>这些改动里，与 openvela 公共仓有关的部分都按大赛规则单独提了 PR，没有直接改本地副本。</p>
 <hr />
 <h2>五、AI 开发流程</h2>
-<p><strong>全程使用 Claude Code。</strong> 从 7 月 25 日到 9 月 18 日，近两个月的开发周期。应用本身、
+<p><strong>全程使用 Claude Code。</strong> 从 7 月 25 日到 9 月 20 日，近两个月的开发周期。应用本身、
 界面重做、上游那 5 个 PR、以及第四节里全部排障，都是在这个流程里做出来的。</p>
-<p>完整对话记录在 <code>logs/</code> 目录里（<code>manifest.json</code> 记录会话清单与导出时间）。注意这份导出
-是 <strong>09-12 的快照</strong>，09-13 之后的界面重做不在其中 —— 提交前需要重跑一次归集工具。</p>
+<p>完整对话记录在 <code>logs/</code> 目录里：<strong>32 个有产出的日子、17,680 条事件</strong>，其中 11,340 条是
+工具调用（能看到改了哪些文件、跑了哪些命令）。整个开发过程在一个会话里连续完成，
+所以只有一个 <code>.jsonl</code>，没有分段或筛选；<code>manifest.json</code> 记录事件总数与会话清单。</p>
 <p>AI 在这个项目里主要不是「写代码」，而是<strong>在信息不足的时候帮忙缩小范围</strong>：</p>
 <ul>
 <li>上面那张表里的「真正的原因」，大部分是先由 AI 根据日志和代码提出假设、再去验证的。
@@ -537,7 +538,7 @@ MQTT + 角色扮演回路是 2026-09-09 上板验证通过的。</p>
 <pre><code>app/kid_buddy/          作品主体：4200+ 行 C + 5 份角色人设设计稿
 board/nsh_minidisplay/  板级配置（defconfig + Make.defs），自带即可编译
 image/                  预编译整机固件 + SHA256
-logs/                   AI Coding 对话日志（2026-07-25 ~ 09-12）
+logs/                   AI Coding 对话日志（2026-07-25 ~ 09-20）
 .claude/skills/         本队沉淀的 4 个开发 Skill
 docs/                   作品介绍、演示脚本、上游 PR 备忘
 contest2026_086_ditiekouyegoulianmeng.xml
