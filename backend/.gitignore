@@ -1,0 +1,12 @@
+# 数据库里有家庭账号和设备 broker 口令，绝不进仓
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 导出的 broker 文件里有明文口令
+broker-out/
+passwd_plain.txt
+
+__pycache__/
+*.pyc
