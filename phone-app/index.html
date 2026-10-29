@@ -4,8 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#1f2937">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="小板伴">
 <title>小板伴 · 家长控制台</title>
-<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script src="mqtt.min.js"></script>
 <style>
   :root {
     --bg: #0f172a;
@@ -67,6 +74,102 @@
   .msg .meta { display: block; font-size: 11px; opacity: 0.6; margin-top: 4px; }
   .msg.in .meta { color: var(--muted); }
 
+  /* 给孩子留言 */
+  #noteText {
+    width: 100%; min-height: 68px; resize: vertical; margin-top: 10px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card2); color: var(--text); font-size: 15px;
+    font-family: inherit; line-height: 1.5; outline: none;
+  }
+  #noteText:focus { border-color: var(--accent); }
+  #noteWhen {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card2); color: var(--text); font-size: 15px; outline: none;
+    -webkit-appearance: none; appearance: none;
+  }
+  #noteWhen:focus { border-color: var(--accent); }
+
+  /* 孩子的冒险记录 */
+  #storyList { margin-top: 10px; max-height: 46vh; overflow-y: auto; }
+  .story-empty { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .story-head {
+    font-size: 12px; color: var(--accent); font-weight: 600;
+    margin: 12px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line);
+  }
+  .story-head:first-child { margin-top: 0; }
+  .turn { font-size: 13px; line-height: 1.5; margin-bottom: 7px; white-space: pre-wrap; word-break: break-word; }
+  .turn.kid { color: var(--text); }
+  .turn.kid::before { content: "孩子："; color: var(--accent); font-weight: 600; }
+  .turn.teller { color: var(--muted); padding-left: 10px; border-left: 2px solid var(--line); }
+
+  /* 成长日报 */
+  #dailyList { margin-top: 10px; max-height: 38vh; overflow-y: auto; }
+  .day {
+    border-left: 3px solid var(--accent); padding: 2px 0 2px 10px;
+    margin-bottom: 14px;
+  }
+  .day-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .day-num { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .day-label { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .day-say {
+    font-size: 12px; line-height: 1.55; color: var(--text);
+    margin: 2px 0 0 2px; padding-left: 8px;
+    border-left: 1px dashed var(--line);
+  }
+  .day-say::before { content: "「"; }
+  .day-say::after  { content: "」"; }
+  .day-remind { font-size: 12px; color: var(--text); line-height: 1.5; }
+
+  /* ── 故事书（全屏覆盖层；打印成 PDF 用的也是它） ── */
+  #book {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: #fbfaf7; color: #26221c; overflow-y: auto;
+    font-family: "Songti SC", "SimSun", "Noto Serif CJK SC", Georgia, serif;
+  }
+  #book.show { display: block; }
+  .book-bar {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: rgba(251,250,247,.95);
+    border-bottom: 1px solid #e5e0d6;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  }
+  .book-bar b { flex: 1; font-size: 14px; }
+  .book-bar button {
+    width: auto; padding: 8px 14px; font-size: 13px; border-radius: 8px;
+    background: #2c5f8a; color: #fff; border: none;
+  }
+  .book-bar button.ghost { background: transparent; color: #6b6355; border: 1px solid #d8d2c6; }
+  .book-inner { max-width: 40em; margin: 0 auto; padding: 28px 22px 60px; }
+
+  .book-cover { text-align: center; padding: 40px 0 48px; border-bottom: 1px solid #e5e0d6; margin-bottom: 8px; }
+  .book-cover h1 { font-size: 30px; margin: 6px 0 14px; letter-spacing: .08em; }
+  .book-kicker { font-size: 12px; letter-spacing: .3em; color: #a89f8d; text-transform: uppercase; font-family: -apple-system, sans-serif; }
+  .book-meta { font-size: 13px; color: #8a8172; }
+
+  .book-chapter { margin-top: 40px; page-break-inside: auto; }
+  .book-chapter h2 {
+    font-size: 17px; margin: 0 0 18px; color: #2c5f8a;
+    border-bottom: 1px solid #e5e0d6; padding-bottom: 8px;
+  }
+  .book-say { font-size: 16px; line-height: 2; margin: 0 0 16px; text-align: justify; }
+  .book-kid {
+    font-size: 15px; line-height: 1.9; margin: 0 0 16px; color: #1d4ed8;
+    border-left: 3px solid #93b4d8; padding-left: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  }
+  .book-kid::before { content: "孩子　"; font-size: 12px; color: #7f9dc0; letter-spacing: .1em; }
+
+  @media print {
+    /* 打印时只留故事书，其余全藏掉 */
+    body > *:not(#book) { display: none !important; }
+    #book { position: static; overflow: visible; background: #fff; }
+    .book-bar { display: none !important; }
+    .book-inner { max-width: none; padding: 0; }
+    .book-chapter { page-break-inside: avoid; }
+    .book-cover { page-break-after: always; }
+  }
+
   footer {
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
     background: var(--card); border-top: 1px solid var(--line);
@@ -78,12 +181,66 @@
   }
   .chip:active { border-color: var(--accent); }
   #composer { display: flex; gap: 8px; }
-  #composer input { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-size: 15px; outline: none; }
+  /* min-width:0 是必须的：input 在 flex 里默认按 20 字符的固有宽度算 min-width，
+     不加这条它就不肯收缩，会把「发送」挤成竖排、顶出屏幕 */
+  #composer input { flex: 1; min-width: 0; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-size: 15px; outline: none; }
   #composer input:focus { border-color: var(--accent); }
-  #composer button { width: auto; padding: 12px 18px; }
+  #composer button { flex: none; width: auto; padding: 12px 18px; }
+
+  /* ── 家庭账号 ───────────────────────────────────────── */
+  #gate { position: fixed; inset: 0; background: rgba(8, 12, 16, .6); display: flex;
+          align-items: center; justify-content: center; padding: 18px; z-index: 100; }
+  #gate .box { background: var(--card); color: var(--text); border-radius: 16px; padding: 20px;
+               width: 100%; max-width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  #gate h2 { margin: 0 0 6px; font-size: 17px; }
+  #gate .sub { margin: 0 0 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  #gate .field { margin-bottom: 10px; }
+  #gate input { width: 100%; box-sizing: border-box; padding: 11px; border-radius: 10px;
+                border: 1px solid var(--line); background: var(--card2); color: var(--text);
+                font-size: 15px; outline: none; }
+  #gate input:focus { border-color: var(--accent); }
+  #gate button { width: 100%; padding: 12px; }
+  .gate-alt { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; }
+  .gate-alt a { color: var(--accent); text-decoration: none; }
+  .gate-msg { margin-top: 10px; font-size: 12px; color: #e07a6a; min-height: 16px; line-height: 1.5; }
+
+  .dev-row { display: flex; gap: 6px; align-items: center; padding: 8px 0;
+             border-top: 1px solid var(--line); font-size: 13px; }
+  .dev-row:first-child { border-top: 0; }
+  .dev-row b { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dev-row button { width: auto; flex: none; padding: 6px 9px; font-size: 12px; }
+  pre.cmd { white-space: pre-wrap; word-break: break-all; background: var(--card2);
+            border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+            font-size: 12px; line-height: 1.5; margin: 8px 0; }
 </style>
 </head>
 <body>
+  <!-- 登录闸门：不登录也能点「先手动连接」绕过，演示和离线都靠它 -->
+  <div id="gate" style="display:none">
+    <div class="box">
+      <h2 id="gateTitle">登录家长账号</h2>
+      <p class="sub" id="gateSub">登录后自动带出你家的板子和专属连接参数。没有账号可以现注册。</p>
+      <div class="field">
+        <label>邮箱</label>
+        <input id="gateEmail" type="email" autocomplete="username" autocapitalize="off">
+      </div>
+      <div class="field">
+        <label>口令</label>
+        <input id="gatePassword" type="password" autocomplete="current-password">
+      </div>
+      <div class="field" id="gateFamilyField" style="display:none">
+        <label>家庭名称</label>
+        <input id="gateFamily" type="text" placeholder="比如 小明家" maxlength="20" autocapitalize="off">
+      </div>
+      <button id="gateSubmit" onclick="gateSubmit()">登录</button>
+      <div class="gate-alt">
+        <a href="#" id="gateSwitch" onclick="gateMode('register');return false;">注册新家庭</a>
+        <a href="#" onclick="gateSkip();return false;">先手动连接</a>
+      </div>
+      <div class="gate-msg" id="gateMsg"></div>
+    </div>
+  </div>
+
   <header>
     <span id="statusDot"></span>
     <h1>小板伴 · 家长控制台</h1>
@@ -91,12 +248,37 @@
   </header>
 
   <main>
+    <!-- 登录后才显示。设备列表和「使用」按钮把连接参数带进下面的设置里 -->
+    <div class="card" id="acctCard" style="display:none">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <b style="flex:1; font-size:14px;">家庭账号</b>
+        <span id="acctWho" style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%;"></span>
+        <button class="ghost" style="width:auto; padding:7px 12px; font-size:13px;" onclick="logout()">退出</button>
+      </div>
+      <div id="devList" style="margin-top:6px;"></div>
+      <div class="row" style="align-items:flex-end; margin-top:8px;">
+        <div class="field" style="margin-bottom:0;">
+          <label>新板子的名字</label>
+          <input id="newDevName" type="text" placeholder="比如 客厅的小豆丁" maxlength="20" autocapitalize="off">
+        </div>
+        <button class="ghost" style="width:auto; padding:10px 14px; font-size:13px;" onclick="addDevice()">添加</button>
+      </div>
+      <div id="provBox" style="display:none; margin-top:10px;">
+        <div style="font-size:12px; color:var(--muted); line-height:1.6;">
+          把下面这条命令在板子的串口（NSH）里执行一次，板子就会用这个家庭专属的 topic 连上来。
+          命令里带设备密码，别发到群里。
+        </div>
+        <pre class="cmd" id="provCmd"></pre>
+        <button class="ghost" style="width:auto; padding:8px 14px; font-size:13px;" onclick="copyProv()">复制命令</button>
+      </div>
+    </div>
+
     <details class="card" open>
       <summary>连接设置</summary>
       <div class="card-body">
         <div class="field">
           <label>Broker 地址（WebSocket）</label>
-          <input id="brokerUrl" type="text" placeholder="ws://192.168.1.100:9001" inputmode="url" autocapitalize="off">
+          <input id="brokerUrl" type="text" value="ws://123.56.1.47:8083/mqtt" placeholder="ws://123.56.1.47:8083/mqtt" inputmode="url" autocapitalize="off">
         </div>
         <div class="row">
           <div class="field">
@@ -104,30 +286,136 @@
             <input id="chatId" type="text" value="parent" autocapitalize="off">
           </div>
           <div class="field">
-            <label>发送 topic（→板子）</label>
-            <input id="topicIn" type="text" value="agent/in" autocapitalize="off">
+            <label>用户名</label>
+            <input id="username" type="text" value="kidbuddy" autocapitalize="off" autocomplete="off">
           </div>
           <div class="field">
-            <label>接收 topic（板子→）</label>
-            <input id="topicOut" type="text" value="agent/out" autocapitalize="off">
-          </div>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>用户名（可空）</label>
-            <input id="username" type="text" autocapitalize="off" autocomplete="off">
-          </div>
-          <div class="field">
-            <label>密码（可空）</label>
+            <label>密码</label>
             <input id="password" type="password" autocomplete="off">
           </div>
         </div>
         <div class="row">
+          <div class="field">
+            <label>发送 topic（→板子）</label>
+            <input id="topicIn" type="text" value="kb086/in" autocapitalize="off">
+          </div>
+          <div class="field">
+            <label>接收 topic（板子→）</label>
+            <input id="topicOut" type="text" value="kb086/out" autocapitalize="off">
+          </div>
+        </div>
+        <div class="row" style="align-items:flex-end;">
+          <div class="field" style="margin-bottom:0;">
+            <label>板子的名字</label>
+            <input id="petName" type="text" placeholder="比如 小豆丁" maxlength="4" autocapitalize="off">
+          </div>
+          <button class="ghost" style="width:auto; padding:10px 14px; font-size:13px;" onclick="setPetName()">设名字</button>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin:6px 0 10px; line-height:1.5;">
+          孩子自己也能给板子起名（直接说「你叫小豆丁」）。这里是可靠的那条路 ——
+          孩子说得不清楚时用这个兜底。
+        </div>
+
+        <div class="row" style="align-items:flex-end;">
+          <div class="field" style="margin-bottom:0;">
+            <label>孩子名字（用 | 分开）</label>
+            <input id="kidNames" type="text" placeholder="小明|小红" autocapitalize="off">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>现在是谁</label>
+            <select id="kidActive"></select>
+          </div>
+          <button class="ghost" style="width:auto; padding:10px 14px; font-size:13px;" onclick="setKids()">设定</button>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin:6px 0 10px; line-height:1.5;">
+          填了名字之后，每个孩子的聊天记录、故事线、剧情进度就各存各的 ——
+          哥哥讲到一半的冒险不会被弟弟接过去。<b>留空 = 关掉</b>，回到单孩子那条路。
+          <br>孩子也可以自己说「我是小明」来切（只有在配了两个以上时才认）。
+        </div>
+
+        <div class="row" style="align-items:flex-end;">
+          <div class="field" style="margin-bottom:0;">
+            <label>几点睡</label>
+            <select id="sleepFrom"></select>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>几点醒</label>
+            <select id="sleepTo"></select>
+          </div>
+          <button class="ghost" style="width:auto; padding:10px 14px; font-size:13px;" onclick="setSleep()">设定</button>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin:6px 0 10px; line-height:1.5;">
+          到点板子会「睡」：眼睛闭上、慢慢呼吸，回答也换成更轻更慢的语气。
+          <b>它不是关机</b> —— 孩子说话它照样答应。两个选成一样就是不睡。
+        </div>
+
+        <div class="row">
           <button id="btnConnect" onclick="connect()">连接</button>
           <button id="btnDisconnect" class="danger" onclick="disconnect()" style="display:none">断开</button>
         </div>
+
+        <div class="row" style="margin-top:12px; align-items:center;">
+          <span id="storeInfo" style="flex:2; font-size:12px; color:var(--muted);">本机记录：0 条</span>
+          <button class="ghost" style="flex:1; padding:8px; font-size:13px;" onclick="clearHistory()">清空记录</button>
+        </div>
+        <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
+          收发记录存在本机（IndexedDB），关掉页面再打开还在。设置项存在 localStorage。<b>密码不存。</b>
+          broker 不要求认证时用户名、密码留空即可。
+        </div>
       </div>
     </details>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <b style="flex:1; font-size:14px;">给孩子留句话</b>
+        <span id="noteStatus" style="font-size:11px; color:var(--muted);"></span>
+        <button class="ghost" style="width:auto; padding:7px 14px; font-size:13px;" onclick="sendNote()">留言</button>
+      </div>
+      <textarea id="noteText" maxlength="180"
+        placeholder="想对孩子说的话…（板子到点会用语音念给他听，原话不改写）"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <div class="field" style="margin-bottom:0;">
+          <label>署名</label>
+          <input id="noteFrom" type="text" value="妈妈" autocapitalize="off">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>什么时候念</label>
+          <select id="noteWhen">
+            <option value="0">马上</option>
+            <option value="600">10 分钟后</option>
+            <option value="1800">30 分钟后</option>
+            <option value="3600">1 小时后</option>
+            <option value="7200">2 小时后</option>
+            <option value="bedtime20">今晚 20:00</option>
+            <option value="morning7">明早 07:00</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <b style="flex:1; font-size:14px;">孩子分享的冒险</b>
+        <span id="storyInfo" style="font-size:11px; color:var(--muted);"></span>
+        <button class="ghost" style="width:auto; padding:7px 12px; font-size:13px;" onclick="openBook()">故事书</button>
+        <button class="ghost" style="width:auto; padding:7px 12px; font-size:13px;" onclick="syncStories()">同步</button>
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
+        这里只显示孩子说过「放进故事书」的部分。没分享的冒险留在板子上，不会传过来。
+      </div>
+      <div id="storyList"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <b style="flex:1; font-size:14px;">成长日报</b>
+        <span id="reportInfo" style="font-size:11px; color:var(--muted);"></span>
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;">
+        从孩子分享的冒险里按天汇总：玩了什么、说了什么、确认了哪些提醒。
+      </div>
+      <div id="dailyList"></div>
+    </div>
 
     <div class="card" style="flex:1; display:flex; flex-direction:column;">
       <div id="log"></div>
@@ -147,6 +435,16 @@
     </div>
   </footer>
 
+  <!-- 故事书：全屏覆盖层，打印成 PDF 用的也是它 -->
+  <div id="book">
+    <div class="book-bar">
+      <b>故事书</b>
+      <button onclick="printBook()">打印 / 存成 PDF</button>
+      <button class="ghost" onclick="closeBook()">关闭</button>
+    </div>
+    <div id="bookBody" class="book-inner"></div>
+  </div>
+
 <script>
   var client = null;
   var connected = false;
@@ -161,6 +459,11 @@
       if (s.topicIn)   $('topicIn').value = s.topicIn;
       if (s.topicOut)  $('topicOut').value = s.topicOut;
       if (s.username)  $('username').value = s.username;
+      /* 口令不落盘（页面上也是这么写的）。登录后每次从后端重新取。 */
+      if (s.petName)   $('petName').value  = s.petName;
+      if (s.kidNames)  { $('kidNames').value = s.kidNames; refreshKidActive(); }
+      if (s.sleepFrom !== undefined) $('sleepFrom').value = s.sleepFrom;
+      if (s.sleepTo   !== undefined) $('sleepTo').value   = s.sleepTo;
     } catch(e){}
   }
 
@@ -171,12 +474,848 @@
         chatId: $('chatId').value.trim(),
         topicIn: $('topicIn').value.trim(),
         topicOut: $('topicOut').value.trim(),
-        username: $('username').value.trim()
+        username: $('username').value.trim(),
+        petName:  $('petName').value.trim(),
+        kidNames: $('kidNames').value.trim(),
+        sleepFrom: $('sleepFrom').value,
+        sleepTo:   $('sleepTo').value
       }));
     } catch(e){}
   }
 
-  function log(text, kind, meta){
+  /* ── 家庭账号（可选） ───────────────────────────────────
+   * 方案 A：账号服务只做身份和路由，故事正文不经过它，也没有任何存档。
+   * 登录后由后端下发这台板子专属的 broker 账号和 topic，浏览器仍然直连
+   * broker —— 和以前一样，只是不再所有家庭共用一条 kb086/out。
+   * 后端不可用时页面照常工作，点「先手动连接」就是老路子。 */
+
+  var acct = null;      /* {account, family, devices} */
+  var gateReg = false;  /* 闸门当前是注册还是登录 */
+
+  function api(path, opt){
+    opt = opt || {};
+    opt.credentials = 'same-origin';
+    if (opt.body && typeof opt.body !== 'string'){
+      opt.body = JSON.stringify(opt.body);
+      opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers || {});
+    }
+    return fetch(path, opt).then(function(r){
+      return r.text().then(function(t){
+        var j = {};
+        try { j = t ? JSON.parse(t) : {}; } catch(e){}
+        if (!r.ok){
+          var err = new Error(j.error || ('HTTP ' + r.status));
+          err.status = r.status;
+          throw err;
+        }
+        return j;
+      });
+    });
+  }
+
+  function gateMsg(text){ $('gateMsg').textContent = text || ''; }
+
+  function showGate(text){
+    gateMsg(text);
+    $('gate').style.display = 'flex';
+  }
+
+  function hideGate(){ $('gate').style.display = 'none'; }
+
+  function gateMode(mode){
+    gateReg = (mode === 'register');
+    $('gateTitle').textContent = gateReg ? '注册家庭账号' : '登录家长账号';
+    $('gateSub').textContent = gateReg
+      ? '每个家庭一个账号。注册后先添加一台板子，再把生成的命令在板子上执行一次。'
+      : '登录后自动带出你家的板子和专属连接参数。';
+    $('gateFamilyField').style.display = gateReg ? '' : 'none';
+    $('gateSubmit').textContent = gateReg ? '注册并登录' : '登录';
+    $('gateSwitch').textContent = gateReg ? '已有账号，去登录' : '注册新家庭';
+    $('gateSwitch').onclick = function(){ gateMode(gateReg ? 'login' : 'register'); return false; };
+    gateMsg('');
+  }
+
+  function gateSubmit(){
+    var email = $('gateEmail').value.trim();
+    var pw = $('gatePassword').value;
+    if (!email || !pw){ gateMsg('邮箱和口令都要填'); return; }
+    if (gateReg && pw.length < 8){ gateMsg('口令至少 8 位'); return; }
+    var body = { email: email, password: pw };
+    if (gateReg) body.family_name = $('gateFamily').value.trim() || '我的家';
+    $('gateSubmit').disabled = true;
+    api(gateReg ? '/api/register' : '/api/login', { method:'POST', body: body })
+      .then(function(){
+        $('gatePassword').value = '';
+        hideGate();
+        return refreshMe();
+      })
+      .catch(function(e){ gateMsg(e.message); })
+      .then(function(){ $('gateSubmit').disabled = false; });
+  }
+
+  function gateSkip(){
+    hideGate();
+    renderMsg('未登录，按手动连接使用。填好下面的 Broker 地址点「连接」。', 'sys');
+  }
+
+  function logout(){
+    api('/api/logout', { method:'POST' }).catch(function(){}).then(function(){
+      try { localStorage.removeItem('kb.lastDevice'); } catch(e){}
+      location.reload();
+    });
+  }
+
+  function refreshMe(){
+    return api('/api/me').then(function(j){
+      acct = j;
+      renderAcct();
+      var last = '';
+      try { last = localStorage.getItem('kb.lastDevice') || ''; } catch(e){}
+      var hit = (j.devices || []).filter(function(d){ return d.id === last; })[0];
+      if (hit) useDevice(hit.id, true);
+    });
+  }
+
+  function renderAcct(){
+    if (!acct){ $('acctCard').style.display = 'none'; return; }
+    $('acctCard').style.display = '';
+    $('acctWho').textContent = acct.family.name + ' · ' + acct.account.email;
+
+    var box = $('devList');
+    box.innerHTML = '';
+    if (!acct.devices.length){
+      var empty = document.createElement('div');
+      empty.style.cssText = 'font-size:12px;color:var(--muted);padding:6px 0;';
+      empty.textContent = '还没有板子。添加一台，会生成它专用的连接命令。';
+      box.appendChild(empty);
+      return;
+    }
+    acct.devices.forEach(function(d){
+      var row = document.createElement('div');
+      row.className = 'dev-row';
+      var name = document.createElement('b');
+      name.textContent = d.name;
+      row.appendChild(name);
+
+      var use = document.createElement('button');
+      use.className = 'ghost';
+      use.textContent = '使用';
+      use.onclick = function(){ useDevice(d.id, false); };
+      row.appendChild(use);
+
+      var rot = document.createElement('button');
+      rot.className = 'ghost';
+      rot.textContent = '换密码';
+      rot.onclick = function(){ rotateDevice(d.id); };
+      row.appendChild(rot);
+
+      var del = document.createElement('button');
+      del.className = 'ghost';
+      del.textContent = '删除';
+      del.onclick = function(){ removeDevice(d.id, d.name); };
+      row.appendChild(del);
+
+      box.appendChild(row);
+    });
+  }
+
+  /* silent=true：开机恢复时只填参数不连，免得一打开页面就往外连 */
+  function useDevice(id, silent){
+    api('/api/devices/' + id + '/provision', { method:'POST' }).then(function(j){
+      applyDevice(j);
+      if (!silent) log('已带出「' + j.device.name + '」的连接参数，点「连接」即可。', 'sys');
+    }).catch(function(e){ log('账号服务：' + e.message, 'sys'); });
+  }
+
+  function applyDevice(j){
+    $('brokerUrl').value = j.broker.url;
+    $('username').value  = j.broker.username;
+    $('password').value  = j.broker.password;
+    $('topicIn').value   = j.broker.topic_in;
+    $('topicOut').value  = j.broker.topic_out;
+    if (!$('chatId').value.trim()) $('chatId').value = 'parent';
+    try { localStorage.setItem('kb.lastDevice', j.device.id); } catch(e){}
+    saveSettings();   /* 口令不落盘 */
+  }
+
+  function addDevice(){
+    var name = ($('newDevName').value || '').trim() || '我的板子';
+    api('/api/devices', { method:'POST', body:{ name:name } }).then(function(j){
+      $('newDevName').value = '';
+      $('provBox').style.display = '';
+      $('provCmd').textContent = j.command;
+      refreshMe();
+    }).catch(function(e){ log('账号服务：' + e.message, 'sys'); });
+  }
+
+  function rotateDevice(id){
+    if (!confirm('换密码之后，板子和手机都要用新命令重新配置。继续？')) return;
+    api('/api/devices/' + id + '/rotate', { method:'POST' }).then(function(j){
+      $('provBox').style.display = '';
+      $('provCmd').textContent = j.command;
+      if (acct && acct.devices.filter(function(d){ return d.id === id; })[0]){
+        var cur = localStorage.getItem('kb.lastDevice');
+        if (cur === id) applyDevice(j);   /* 正在用的这台，直接换上新口令 */
+      }
+      log('设备密码已更换，记得在板子上重新执行命令。', 'sys');
+    }).catch(function(e){ log('账号服务：' + e.message, 'sys'); });
+  }
+
+  function removeDevice(id, name){
+    if (!confirm('删除「' + name + '」？板子上的连接会失效。')) return;
+    api('/api/devices/' + id, { method:'DELETE' }).then(function(){
+      var cur = localStorage.getItem('kb.lastDevice');
+      if (cur === id){ try { localStorage.removeItem('kb.lastDevice'); } catch(e){} }
+      refreshMe();
+    }).catch(function(e){ log('账号服务：' + e.message, 'sys'); });
+  }
+
+  function copyProv(){
+    var text = $('provCmd').textContent || '';
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){
+        renderMsg('命令已复制。', 'sys');
+      }).catch(function(){ selectProv(); });
+    } else {
+      selectProv();
+    }
+  }
+
+  function selectProv(){
+    var r = document.createRange();
+    r.selectNodeContents($('provCmd'));
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    renderMsg('已选中命令，手动复制即可。', 'sys');
+  }
+
+  /* ── 本机存储（IndexedDB） ───────────────────────────────
+   * 设置项小、要同步读，留在 localStorage；收发记录可能越攒越多，
+   * 放 IndexedDB（容量按几百 MB 算，localStorage 只有 5MB）。
+   * 只存和板子之间的真实往来（in / out），连接状态那类刷屏的不存。 */
+
+  var DB_NAME = 'kidbuddy', DB_VER = 2, STORE = 'messages';
+  var STORY_STORE = 'story';          /* v2：孩子的冒险记录 */
+  /* v2.78：只同步「分享档案」。孩子自己的故事会话（kid_buddy:story）留在
+   * 板子上用于续讲，家长端不取 —— 家长看到的是孩子主动同意分享的部分。 */
+  var STORY_TARGET = 'kid_buddy:share';
+  var db = null;
+
+  function dbOpen(cb){
+    if (db) { cb(db); return; }
+    var req;
+    try { req = indexedDB.open(DB_NAME, DB_VER); } catch(e){ cb(null); return; }
+    req.onupgradeneeded = function(e){
+      var d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) {
+        var os = d.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+        os.createIndex('ts', 'ts');
+      }
+      if (!d.objectStoreNames.contains(STORY_STORE)) {
+        /* keyPath 是算出来的去重键（见 storyKey），put 时同键自动覆盖 */
+        var ss = d.createObjectStore(STORY_STORE, { keyPath: 'key' });
+        ss.createIndex('ts', 'ts');
+      }
+    };
+    req.onsuccess = function(e){ db = e.target.result; cb(db); };
+    req.onerror   = function(){ cb(null); };
+  }
+
+  function dbAdd(rec){
+    dbOpen(function(d){
+      if (!d) return;
+      try { d.transaction(STORE, 'readwrite').objectStore(STORE).add(rec); } catch(e){}
+    });
+  }
+
+  function dbCount(cb){
+    dbOpen(function(d){
+      if (!d) { cb(0); return; }
+      try {
+        var r = d.transaction(STORE, 'readonly').objectStore(STORE).count();
+        r.onsuccess = function(){ cb(r.result); };
+        r.onerror   = function(){ cb(0); };
+      } catch(e){ cb(0); }
+    });
+  }
+
+  /* 取最近 n 条，按时间正序回给回调 */
+  function dbRecent(n, cb){
+    dbOpen(function(d){
+      if (!d) { cb([]); return; }
+      var out = [];
+      try {
+        var idx = d.transaction(STORE, 'readonly').objectStore(STORE).index('ts');
+        idx.openCursor(null, 'prev').onsuccess = function(e){
+          var c = e.target.result;
+          if (!c || out.length >= n) { cb(out.reverse()); return; }
+          out.push(c.value);
+          c.continue();
+        };
+      } catch(e){ cb([]); }
+    });
+  }
+
+  function updateStoreInfo(){
+    dbCount(function(n){
+      $('storeInfo').textContent = '本机记录：' + n + ' 条';
+    });
+  }
+
+  function clearHistory(){
+    dbOpen(function(d){
+      if (!d) return;
+      try { d.transaction(STORE, 'readwrite').objectStore(STORE).clear(); } catch(e){}
+      $('log').innerHTML = '';
+      updateStoreInfo();
+      renderMsg('本机记录已清空', 'sys');
+    });
+  }
+
+  /* ── 给孩子留句话 ────────────────────────────────────────────
+   *
+   * 板子收到的是一句话 + 一个「多少秒之后」，会排成定时任务，到点用 TTS
+   * 念给孩子 —— **原话不改写**（板子那边走的是不含大模型的那条路，
+   * 所以不会像普通提问那样被模型重写一遍）。
+   * 孩子听完说「知道了」时，回执会发回这台手机。
+   *
+   * 为什么只发「多少秒之后」而不是一个钟点：板子没有 RTC，时钟可能还没校准。
+   * 发时长的话，钟走得再偏，走一秒还是一秒，到点一定准。 */
+
+  function sendNote(){
+    var t = $('noteText').value.trim();
+
+    if (!t) { noteStatus('写点什么再发吧'); return; }
+    if (!connected) { noteStatus('未连接，先连上 broker'); return; }
+
+    var d = noteDelaySeconds();
+
+    publish({ type: 'note', content: t,
+              from: $('noteFrom').value.trim() || '爸爸妈妈',
+              delay: d,
+              chat_id: $('chatId').value.trim() || 'parent' },
+            '→ 给孩子留言：' + t);
+
+    $('noteText').value = '';
+    noteStatus('已发出，' + fmtDelay(d) + '后念给孩子');
+  }
+
+  /* 「今晚 20:00」这种按本机时间换算成秒数 —— 换算用手机的时间，
+   * 但计时是板子自己的事 */
+  function noteDelaySeconds(){
+    var v = $('noteWhen').value;
+    if (v === 'bedtime20') return secsUntil(20, 0, false);
+    if (v === 'morning7')  return secsUntil(7, 0, true);
+    return parseInt(v, 10) || 0;
+  }
+
+  function secsUntil(hh, mm, forceNextDay){
+    var now = new Date();
+    var t = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+                     hh, mm, 0, 0);
+    /* 今天这个点已经过了就顺延到明天 */
+    if (forceNextDay || t.getTime() <= now.getTime()) {
+      t.setDate(t.getDate() + 1);
+    }
+    return Math.max(0, Math.round((t.getTime() - now.getTime()) / 1000));
+  }
+
+  function fmtDelay(d){
+    if (d <= 0) return '马上';
+    if (d >= 3600) return (Math.round(d / 360) / 10) + ' 小时';
+    if (d >= 60) return Math.round(d / 60) + ' 分钟';
+    return d + ' 秒';
+  }
+
+  var noteStatusTimer = null;
+  function noteStatus(s){
+    $('noteStatus').textContent = s;
+    if (noteStatusTimer) clearTimeout(noteStatusTimer);
+    noteStatusTimer = setTimeout(function(){ $('noteStatus').textContent = ''; }, 8000);
+  }
+
+  /* ── 给板子起名字 ────────────────────────────────────────────
+   *
+   * 孩子自己说「你叫小豆丁」也能设（板子上做了一套保守的语音识别），
+   * 但语音认名字本来就不靠谱 —— 这条是可靠的那条路，用来兜底和纠错。
+   * 板子收到后跨重启记得，之后就用这个名字自称。 */
+
+  function setPetName(){
+    var n = $('petName').value.trim();
+
+    if (!n) { log('名字是空的', 'sys'); return; }
+    if (!connected) { log('未连接，先连上 broker', 'sys'); return; }
+
+    publish({ type: 'petname', name: n,
+              chat_id: $('chatId').value.trim() || 'parent' },
+            '→ 把板子命名为：' + n);
+
+    saveSettings();
+  }
+
+  /* ── 孩子档案 ────────────────────────────────────────────────
+   *
+   * 一个家里两个孩子时，各自的会话要分开。发过去的名单里**第一个是当前那个**，
+   * 所以「现在是谁」这个下拉其实是在调整顺序。
+   *
+   * 板子那边一个档案都没配时，走的是和以前逐字一致的老路径 ——
+   * 所以这里留空就是「关掉」，不会影响单孩子家庭。
+   *
+   * 名字只收汉字和字母数字（板子要拿它当文件名和会话 id 用），
+   * 带空格或标点的会被板子丢掉，这里也先过滤一遍免得家长困惑。 */
+
+  function parseKidNames(){
+    return $('kidNames').value.split(/[|,，、\s]+/).filter(function(x){
+      return /^[0-9A-Za-z\u4e00-\u9fa5]+$/.test(x);
+    });
+  }
+
+  function refreshKidActive(){
+    var names = parseKidNames();
+    var sel = $('kidActive');
+    var keep = sel.value;
+    var html = '';
+
+    names.forEach(function(n){
+      html += '<option value="' + escHtml(n) + '">' + escHtml(n) + '</option>';
+    });
+
+    sel.innerHTML = html;
+
+    if (names.indexOf(keep) >= 0) sel.value = keep;
+  }
+
+  function setKids(){
+    if (!connected) { log('未连接，先连上 broker', 'sys'); return; }
+
+    var names = parseKidNames();
+    var active = $('kidActive').value;
+
+    /* 当前那个排到最前面 —— 板子认第一个 */
+    if (names.indexOf(active) > 0) {
+      names.splice(names.indexOf(active), 1);
+      names.unshift(active);
+    }
+
+    publish({ type: 'kid', list: names.join('|'),
+              chat_id: $('chatId').value.trim() || 'parent' },
+            names.length ? ('→ 孩子名单：' + names.join('、') + '（当前 ' + names[0] + '）')
+                         : '→ 关掉孩子档案');
+
+    saveSettings();
+  }
+
+  /* ── 睡觉时间 ────────────────────────────────────────────────
+   *
+   * 到点板子就「睡」（眼睛闭上慢慢呼吸），回答也切到更轻更慢的语气。
+   * 它**不是关机** —— 孩子半夜醒了说话它照样答应。
+   *
+   * 板子那边只在**时钟可信**的时候才判断睡觉时间：这块板子没有 RTC，
+   * 开机时是 1970，不看这个标志的话会在大白天睡觉。
+   * 所以如果板上自检显示「时间没校上」，这个功能是不会生效的。 */
+
+  function fillSleepHours(){
+    var i, opt, html = '';
+    for (i = 0; i < 24; i++) {
+      html += '<option value="' + i + '">' + (i < 10 ? '0' : '') + i + ':00</option>';
+    }
+    $('sleepFrom').innerHTML = html;
+    $('sleepTo').innerHTML   = html;
+
+    /* 和板子那边的默认值保持一致（21 睡 7 醒）。不设的话这里会显示
+     * 00:00 / 00:00，而 00:00 == 00:00 在协议里表示「关掉」——
+     * 家长会以为这功能本来就没开。存过的设置会在 loadSettings 里覆盖掉。 */
+    $('sleepFrom').value = 21;
+    $('sleepTo').value   = 7;
+  }
+
+  function setSleep(){
+    if (!connected) { log('未连接，先连上 broker', 'sys'); return; }
+
+    var f = parseInt($('sleepFrom').value, 10);
+    var t = parseInt($('sleepTo').value, 10);
+
+    publish({ type: 'sleep', from: f, to: t,
+              chat_id: $('chatId').value.trim() || 'parent' },
+            (f === t) ? '→ 关掉睡觉时间' : ('→ 板子 ' + f + ':00 睡、' + t + ':00 醒'));
+
+    saveSettings();
+  }
+
+  /* ── 孩子的冒险记录 ──────────────────────────────────────────
+   *
+   * 板子那边只保留最近 20 条会话，而且会滚动截断（AGENT_SESSION_MAX_MSGS）——
+   * 所以**长期档案放在这台手机上**：每次同步把新出现的合并进来，
+   * 按 (role, ts, content) 去重。板子是窗口，手机是档案。
+   *
+   * 传输是切片来的：MQTT 的发送缓冲只有 1KB，一条历史发不完。
+   * 板子每 200ms 发一片，这里按 seq/total 拼回去再解析。 */
+
+  var storyBuf = null;   /* 正在收的一批：{total, target, parts, got} */
+
+  function syncStories(){
+    if (!connected) { log('未连接，先连上 broker 再同步', 'sys'); return; }
+    storyBuf = null;                       /* 丢掉上一次没收完的残片 */
+    $('storyInfo').textContent = '同步中…';
+    publish({ type: 'history', target: STORY_TARGET,
+              chat_id: $('chatId').value.trim() || 'parent' },
+            '→ 请求孩子的冒险记录');
+  }
+
+  function onStoryChunk(o){
+    var total = o.total | 0, seq = o.seq | 0;
+    if (total < 1 || seq < 1 || seq > total) return;
+
+    /* total 变了说明板子开了新的一批，重新开始收 */
+    if (!storyBuf || storyBuf.total !== total || storyBuf.target !== o.target) {
+      storyBuf = { total: total, target: o.target,
+                   parts: new Array(total), got: 0 };
+    }
+
+    if (storyBuf.parts[seq - 1] === undefined) {
+      storyBuf.parts[seq - 1] = o.data || '';
+      storyBuf.got++;
+    }
+    $('storyInfo').textContent = '收到 ' + storyBuf.got + '/' + total + ' 片';
+
+    if (storyBuf.got === total) {
+      var target = storyBuf.target;
+      var parts = storyBuf.parts;
+      storyBuf = null;
+      importStoryJson(partsToUtf8(parts), target);
+    }
+  }
+
+  /* ⚠️ 千万别把各片的 base64 字符串直接拼起来再解码 —— 那是错的。
+   *
+   * 每片的字节数不一定能整除 3，base64 编码后末尾会带 '=' 填充；把几个带填充的
+   * base64 串首尾相接，解码出来是错位的乱码（实测：3621 字节的历史拼回来只剩
+   * 767 字节，只活下来最后一片）。
+   *
+   * 正确做法是**每片各自解码成字节，再把字节拼起来**，最后整体做一次 UTF-8
+   * 解码。这样片与片之间哪怕正好切断一个汉字也没关系 —— 字节流拼回去就复原了。 */
+  function partsToUtf8(parts){
+    var bufs = [], total = 0, i, j, bin, u8;
+
+    for (i = 0; i < parts.length; i++) {
+      bin = atob(parts[i] || '');
+      u8 = new Uint8Array(bin.length);
+      for (j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
+      bufs.push(u8);
+      total += u8.length;
+    }
+
+    var all = new Uint8Array(total), off = 0;
+    for (i = 0; i < bufs.length; i++) {
+      all.set(bufs[i], off);
+      off += bufs[i].length;
+    }
+
+    return new TextDecoder('utf-8').decode(all);
+  }
+
+  function importStoryJson(json, target){
+    var arr;
+    try { arr = JSON.parse(json); } catch(e){
+      $('storyInfo').textContent = '解析失败';
+      log('故事记录解析失败：' + e, 'sys');
+      return;
+    }
+    if (!Array.isArray(arr)) arr = [];
+
+    dbOpen(function(d){
+      if (!d) { $('storyInfo').textContent = '本机存储不可用'; return; }
+      var tx = d.transaction(STORY_STORE, 'readwrite');
+      var os = tx.objectStore(STORY_STORE);
+
+      arr.forEach(function(m){
+        if (!m || typeof m.content !== 'string' || !m.content) return;
+        os.put({                        /* key 一样 = 覆盖，天然去重 */
+          key:     storyKey(m),
+          role:    m.role || 'assistant',
+          content: m.content,
+          ts:      (typeof m.ts === 'number') ? m.ts : 0,
+          target:  target
+        });
+      });
+
+      tx.oncomplete = function(){ renderStories(); renderDaily(); };
+      tx.onerror    = function(){ $('storyInfo').textContent = '写入失败'; };
+    });
+  }
+
+  /* 去重键：role + ts + 内容哈希。
+   * 板子写进会话文件的 ts 是那一轮的时间戳（秒），同一条消息每次同步都一模一样，
+   * 所以重复同步能精确命中同一把键。哈希只用来把长内容压短，不用来防碰撞攻击。 */
+  function storyKey(m){
+    var s = (m.role || '') + '|' + (m.ts || 0) + '|' + (m.content || '');
+    var h = 5381, i;
+    for (i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (m.ts || 0) + '-' + (h >>> 0).toString(36);
+  }
+
+  function renderStories(){
+    dbOpen(function(d){
+      if (!d) return;
+      var rows = [];
+      var tx = d.transaction(STORY_STORE, 'readonly');
+      tx.objectStore(STORY_STORE).openCursor().onsuccess = function(e){
+        var c = e.target.result;
+        if (!c) { drawStories(rows); return; }
+        rows.push(c.value);
+        c.continue();
+      };
+    });
+  }
+
+  function drawStories(rows){
+    var el = $('storyList');
+
+    if (!rows.length) {
+      el.innerHTML = '<div class="story-empty">还没有分享记录。孩子在板子上玩完一段冒险，' +
+                     '说一句「把这次冒险放进故事书」，这里就会出现。</div>';
+      $('storyInfo').textContent = '';
+      return;
+    }
+
+    var groups = groupAdventures(rows);
+    var html = '';
+    for (var i = groups.length - 1; i >= 0; i--) {   /* 新的排最前 */
+      var g = groups[i];
+      html += '<div class="story-head">' + fmtWhen(g.start) +
+              ' · ' + g.items.length + ' 条</div>';
+      g.items.forEach(function(r){
+        html += '<div class="turn ' + (r.role === 'user' ? 'kid' : 'teller') + '">' +
+                escHtml(r.content) + '</div>';
+      });
+    }
+
+    el.innerHTML = html;
+    el.scrollTop = 0;
+    $('storyInfo').textContent = '本机共 ' + rows.length + ' 条';
+  }
+
+  /* ── 成长日报 ────────────────────────────────────────────
+   * 不调模型，只把本机已经同步的分享记录和提醒回执按天汇总。
+   * 每一天的每一句都能追溯到孩子自己说过的话 —— 不会出现模型编的
+   * 「今天心情很好」。家长端只拿到分享过的内容，所以日报也天然受
+   * 分享闸门约束。 */
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+
+  function dayKey(ts){
+    var d = new Date(ts * 1000);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function renderDaily(){
+    dbOpen(function(d){
+      if (!d) return;
+      var rows = [];
+      try {
+        var tx = d.transaction(STORY_STORE, 'readonly');
+        tx.objectStore(STORY_STORE).openCursor().onsuccess = function(e){
+          var c = e.target.result;
+          if (c) { rows.push(c.value); c.continue(); return; }
+          dbRecent(4000, function(msgs){ drawDaily(rows, msgs); });
+        };
+      } catch(e){ drawDaily([], []); }
+    });
+  }
+
+  function drawDaily(rows, msgs){
+    var el = $('dailyList');
+    var byDay = {}, order = [], i;
+
+    function bucket(k){
+      if (!byDay[k]) { byDay[k] = { rows: [], remind: [] }; order.push(k); }
+      return byDay[k];
+    }
+
+    rows.forEach(function(r){
+      if (!r.ts) return;
+      bucket(dayKey(r.ts)).rows.push(r);
+    });
+
+    (msgs || []).forEach(function(m){
+      if (m.kind !== 'in' || !m.ts) return;
+      var t = m.text || '';
+      if (t.indexOf('孩子已确认提醒') !== 0) return;
+      bucket(dayKey(Math.floor(m.ts / 1000))).remind.push(t);
+    });
+
+    if (!order.length) {
+      el.innerHTML = '<div class="story-empty">还没有内容。孩子分享一次冒险、' +
+                     '或者确认一次提醒之后，这里会按天记录下来。</div>';
+      $('reportInfo').textContent = '';
+      return;
+    }
+
+    order.sort();
+    var html = '';
+    var days = 0;
+
+    for (i = order.length - 1; i >= 0 && days < 7; i--, days++) {
+      var k = order[i], b = byDay[k];
+      var groups  = groupAdventures(b.rows.slice());
+      var kidLines = b.rows.filter(function(r){ return r.role === 'user'; });
+      var said = [];
+
+      kidLines.forEach(function(r){
+        var s = String(r.content || '').trim();
+        if (!s || /放进故事书|分享给|给爸爸妈妈看/.test(s)) return;
+        if (said.indexOf(s) >= 0) return;
+        said.push(s);
+      });
+
+      var d0 = new Date(k + 'T00:00:00');
+      html += '<div class="day">';
+      html += '<div class="day-head">' + (d0.getMonth() + 1) + ' 月 ' +
+              d0.getDate() + ' 日' +
+              '<span class="day-num">冒险 ' + groups.length + ' 场 · 说了 ' +
+              kidLines.length + ' 句</span></div>';
+
+      if (said.length) {
+        html += '<div class="day-label">他说的</div>';
+        said.slice(0, 4).forEach(function(s){
+          if (s.length > 46) s = s.slice(0, 46) + '…';
+          html += '<div class="day-say">' + escHtml(s) + '</div>';
+        });
+      }
+
+      if (b.remind.length) {
+        html += '<div class="day-label">提醒</div>';
+        b.remind.slice(0, 3).forEach(function(t){
+          html += '<div class="day-remind">' + escHtml(t) + '</div>';
+        });
+      }
+
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+    $('reportInfo').textContent = '最近 ' + Math.min(days, 7) + ' 天';
+  }
+
+  function escHtml(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* 一次冒险 = 一组时间挨得近的往来。板子不告诉我们会话边界，
+   * 按间隔 30 分钟切分 —— 孩子中间跑去吃饭再回来，算新的一段。
+   * 卡片列表和故事书共用这一份，免得两边走偏。 */
+  function groupAdventures(rows){
+    rows.sort(function(a, b){ return (a.ts || 0) - (b.ts || 0); });
+
+    var groups = [], cur = null;
+    rows.forEach(function(r){
+      if (!cur || ((r.ts || 0) - cur.end) > 1800) {
+        cur = { start: r.ts || 0, end: r.ts || 0, items: [] };
+        groups.push(cur);
+      }
+      cur.items.push(r);
+      if ((r.ts || 0) > cur.end) cur.end = r.ts || 0;
+    });
+
+    return groups;
+  }
+
+  /* ── 故事书 ──────────────────────────────────────────────────
+   *
+   * 把冒险记录排成一本能读的书，用浏览器自带的「打印 → 存为 PDF」导出。
+   * 这么做而不是自己生成 PDF/图片，是因为**零依赖**：不用引任何库，
+   * 手机上也能直接导。
+   *
+   * 版面上刻意做了区分：故事正文用宋体、字大行疏，孩子的每一句另外标出来
+   * （换无衬线字体 + 左侧竖线 + 蓝色）—— 家长翻这本的时候，
+   * 想看的其实是**孩子说了什么**，而不是故事本身。 */
+
+  var CHAPTER_NAMES = ['第一章','第二章','第三章','第四章','第五章',
+                       '第六章','第七章','第八章','第九章','第十章',
+                       '第十一章','第十二章','第十三章','第十四章','第十五章'];
+
+  function openBook(){
+    dbOpen(function(d){
+      if (!d) return;
+      var rows = [];
+      var tx = d.transaction(STORY_STORE, 'readonly');
+      tx.objectStore(STORY_STORE).openCursor().onsuccess = function(e){
+        var c = e.target.result;
+        if (!c) { drawBook(rows); return; }
+        rows.push(c.value);
+        c.continue();
+      };
+    });
+  }
+
+  function drawBook(rows){
+    var el = $('bookBody');
+
+    if (!rows.length) {
+      el.innerHTML = '<div class="book-cover"><div class="book-kicker">kid_buddy</div>' +
+                     '<h1>还没有故事</h1>' +
+                     '<p class="book-meta">孩子在板子上玩过冒险之后，回来点「同步」就有了。</p></div>';
+      $('book').classList.add('show');
+      return;
+    }
+
+    var groups = groupAdventures(rows);
+    var first = groups[0].start;
+    var last  = groups[groups.length - 1].end;
+
+    var html = '<div class="book-cover">' +
+               '<div class="book-kicker">kid_buddy</div>' +
+               '<h1>孩子的冒险故事</h1>' +
+               '<div class="book-meta">' + fmtDay(first) + ' — ' + fmtDay(last) +
+               '　·　一共 ' + groups.length + ' 段冒险</div></div>';
+
+    groups.forEach(function(g, i) {
+      html += '<section class="book-chapter">';
+      html += '<h2>' + (CHAPTER_NAMES[i] || ('第 ' + (i + 1) + ' 章')) +
+              '　·　' + fmtDay(g.start) + '</h2>';
+      g.items.forEach(function(r) {
+        if (r.role === 'user') {
+          html += '<p class="book-kid">' + escHtml(r.content) + '</p>';
+        } else {
+          html += '<p class="book-say">' + escHtml(r.content) + '</p>';
+        }
+      });
+      html += '</section>';
+    });
+
+    el.innerHTML = html;
+    $('book').classList.add('show');
+    $('book').scrollTop = 0;
+  }
+
+  function closeBook(){
+    $('book').classList.remove('show');
+  }
+
+  function printBook(){
+    window.print();
+  }
+
+  function fmtDay(ts){
+    if (!ts) return '未知日期';
+    var d = new Date(ts * 1000);
+    return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+  }
+
+  function fmtWhen(ts){
+    if (!ts) return '未知时间';
+    var d = new Date(ts * 1000);
+    function p(n){ return (n < 10 ? '0' : '') + n; }
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' +
+           p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  /* ── 消息渲染 ───────────────────────────────────────── */
+
+  function renderMsg(text, kind, meta){
     var el = document.createElement('div');
     el.className = 'msg ' + (kind || 'sys');
     el.textContent = text;
@@ -190,6 +1329,15 @@
     $('log').scrollTop = $('log').scrollHeight;
   }
 
+  /* 画到屏幕上，同时落盘。只存和板子的往来，避免重连提示刷满记录 */
+  function log(text, kind, meta){
+    renderMsg(text, kind, meta);
+    if (kind === 'in' || kind === 'out') {
+      dbAdd({ ts: Date.now(), kind: kind, text: text, meta: meta || '' });
+      setTimeout(updateStoreInfo, 0);
+    }
+  }
+
   function setStatus(on, text){
     connected = on;
     $('statusDot').className = on ? 'on' : '';
@@ -200,7 +1348,7 @@
 
   function connect(){
     var url = $('brokerUrl').value.trim();
-    if (!url) { log('请先填写 Broker 地址（如 ws://192.168.1.100:9001）', 'sys'); return; }
+    if (!url) { log('请先填写 Broker 地址（如 ws://123.56.1.47:8083/mqtt）', 'sys'); return; }
     saveSettings();
     log('正在连接 ' + url + ' …', 'sys');
 
@@ -221,6 +1369,10 @@
       setStatus(true, '已连接');
       log('已连接，订阅 ' + $('topicOut').value.trim(), 'sys');
       client.subscribe($('topicOut').value.trim(), { qos: 1 });
+
+      /* 一连上就顺手把故事记录要一遍，让家长打开就看到，不用记得点同步。
+       * 等一秒再发：SUBSCRIBE 还没确认就发请求的话，板子回的切片会被漏掉。 */
+      setTimeout(syncStories, 1000);
     });
 
     client.on('message', function(topic, payload){
@@ -229,8 +1381,15 @@
       var meta = '来自 ' + topic;
       try {
         var obj = JSON.parse(text);
+        /* 故事记录的切片不进对话日志 —— 一次同步会来十几条，
+         * 混在里面会把真正的往来淹掉。状态显示在故事卡片上。 */
+        if (obj.type === 'story_log') { onStoryChunk(obj); return; }
         if (obj.content) text = obj.content;
         if (obj.chat_id) meta = '来自 ' + topic + ' · ' + obj.chat_id;
+
+        /* 板子说孩子刚把冒险放进了故事书 —— 顺手拉一次分享档案，
+         * 家长不用再点「同步」。 */
+        if (text.indexOf('【故事分享】') >= 0) setTimeout(syncStories, 400);
         if (obj.type === 'response') text = '📥 ' + text;
       } catch(e){}
       log(text, 'in', meta);
@@ -254,12 +1413,12 @@
     log('已手动断开', 'sys');
   }
 
-  function publish(obj){
+  function publish(obj, label){
     if (!client || !connected) { log('未连接，请先连接 broker', 'sys'); return; }
     var topic = $('topicIn').value.trim();
     var payload = JSON.stringify(obj);
     client.publish(topic, payload, { qos: 1 });
-    log(obj.content || payload, 'out', '发给 ' + topic);
+    log(label || obj.content || payload, 'out', '发给 ' + topic);
   }
 
   function sendText(text){
@@ -282,8 +1441,44 @@
     if (e.key === 'Enter') sendInput();
   });
 
+  /* 注册 service worker，让「装到桌面」之后没网也能打开。
+   * 局域网 http:// 下浏览器不给注册（不是安全上下文），注册失败是正常的，
+   * 页面功能一点不受影响 —— 想做真 PWA 得走 https。 */
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('service-worker.js').catch(function(){});
+  }
+
+  fillSleepHours();
+
+  /* 家长改名单时，下面那个「现在是谁」跟着更新 */
+  $('kidNames').addEventListener('input', refreshKidActive);
+
   loadSettings();
-  log('小板伴家长控制台已就绪。填好 Broker 地址点「连接」。', 'sys');
+
+  /* 账号闸门：401 才弹；后端没部署或连不上就静默降级到手动模式 */
+  api('/api/me').then(function(){
+    hideGate();
+    return refreshMe();
+  }).catch(function(e){
+    if (e.status === 401) showGate();
+    else renderMsg('账号服务不可用，仍可手动连接。', 'sys');
+  });
+
+  ['gateEmail', 'gatePassword', 'gateFamily'].forEach(function(id){
+    $(id).addEventListener('keydown', function(e){ if (e.key === 'Enter') gateSubmit(); });
+  });
+
+  /* 先把上次的记录铺回来，再打今天的开场白 */
+  dbRecent(200, function(rows){
+    rows.forEach(function(r){ renderMsg(r.text, r.kind, r.meta); });
+    if (rows.length) renderMsg('已从本机恢复 ' + rows.length + ' 条记录', 'sys');
+    updateStoreInfo();
+    renderMsg('小板伴家长控制台已就绪。填好 Broker 地址点「连接」。', 'sys');
+  });
+
+  /* 冒险记录是本机档案，不用等连上就能看 */
+  renderStories();
+  renderDaily();
 </script>
 </body>
 </html>

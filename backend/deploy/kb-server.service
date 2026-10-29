@@ -1,0 +1,23 @@
+[Unit]
+Description=kid_buddy 家庭账号后端
+After=network.target
+
+[Service]
+Type=simple
+User=kidbuddy
+Group=kidbuddy
+WorkingDirectory=/opt/kidbuddy/backend
+EnvironmentFile=/etc/kidbuddy/backend.env
+ExecStart=/usr/bin/python3 /opt/kidbuddy/backend/kb_server.py --serve
+Restart=on-failure
+RestartSec=3
+
+# 只让服务自己碰数据目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kidbuddy
+
+[Install]
+WantedBy=multi-user.target

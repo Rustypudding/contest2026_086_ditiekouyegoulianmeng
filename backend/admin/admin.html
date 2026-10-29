@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小板伴 · 企业端</title>
+<style>
+  :root { --bg:#0f1419; --card:#171e26; --card2:#1e2731; --line:#2a3540;
+          --text:#e8edf2; --muted:#8a98a6; --accent:#5aa9e6; --danger:#e07a6a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  header { display:flex; align-items:center; gap:10px; padding:14px 18px;
+           border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+  header h1 { font-size:16px; margin:0; flex:1; font-weight:600; }
+  header span { font-size:12px; color:var(--muted); }
+  main { padding:16px 18px 40px; max-width:1000px; margin:0 auto; }
+  .tiles { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .tile { flex:1; min-width:120px; background:var(--card); border:1px solid var(--line);
+          border-radius:12px; padding:12px 14px; }
+  .tile b { display:block; font-size:22px; font-weight:600; }
+  .tile span { font-size:12px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:14px; overflow-x:auto; }
+  .card h2 { font-size:14px; margin:0 0 10px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; white-space:nowrap; }
+  tr:last-child td { border-bottom:0; }
+  button { background:var(--accent); color:#08121a; border:0; border-radius:8px;
+           padding:7px 12px; font-size:12px; cursor:pointer; }
+  button.ghost { background:var(--card2); color:var(--text); border:1px solid var(--line); }
+  button.danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+  button:disabled { opacity:.5; cursor:default; }
+  input { background:var(--card2); border:1px solid var(--line); color:var(--text);
+          border-radius:8px; padding:10px; font-size:14px; width:100%; }
+  .field { margin-bottom:10px; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
+  #login { max-width:340px; margin:12vh auto; background:var(--card); border:1px solid var(--line);
+           border-radius:14px; padding:20px; }
+  #login h1 { font-size:17px; margin:0 0 14px; }
+  #msg { font-size:12px; color:var(--danger); min-height:16px; margin-top:8px; line-height:1.5; }
+  .muted { color:var(--muted); font-size:12px; line-height:1.6; }
+  .acct { padding:2px 0; }
+  .acct .off { color:var(--danger); }
+  .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .badge { font-size:11px; color:var(--muted); }
+  @media (max-width:600px){
+    th:nth-child(2), td:nth-child(2) { display:none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>小板伴 · 企业端</h1>
+  <span id="who"></span>
+  <button class="ghost" id="btnOut" style="display:none" onclick="logout()">退出</button>
+</header>
+
+<main>
+  <div id="login" style="display:none">
+    <h1>运营登录</h1>
+    <div class="field"><label>邮箱</label><input id="email" type="email" autocomplete="username"></div>
+    <div class="field"><label>口令</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button style="width:100%;padding:11px" onclick="doLogin()">登录</button>
+    <div id="msg"></div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="tiles">
+      <div class="tile"><b id="tFamilies">–</b><span>家庭</span></div>
+      <div class="tile"><b id="tAccounts">–</b><span>家长账号</span></div>
+      <div class="tile"><b id="tDevices">–</b><span>设备</span></div>
+      <div class="tile"><b id="tLogins">–</b><span>近 7 天登录</span></div>
+    </div>
+
+    <div class="card">
+      <h2>家庭</h2>
+      <div class="muted" style="margin-bottom:8px;">
+        这里只显示账号、设备和操作记录。<b>系统不保存任何故事正文</b>，
+        故事只在板子和家长自己的手机里 —— 所以「导出」导出的也只有账号与设备元数据。
+      </div>
+      <table>
+        <thead><tr><th>家庭</th><th>创建时间</th><th>账号</th><th>设备</th><th>操作</th></tr></thead>
+        <tbody id="famBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>审计日志（最近 100 条）</h2>
+      <table>
+        <thead><tr><th>时间</th><th>动作</th><th>账号</th><th>对象</th><th>IP</th></tr></thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+  var me = null;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function api(path, opt){
+    opt = opt || {};
+    opt.credentials = 'same-origin';
+    if (opt.body && typeof opt.body !== 'string'){
+      opt.body = JSON.stringify(opt.body);
+      opt.headers = Object.assign({'Content-Type':'application/json'}, opt.headers || {});
+    }
+    return fetch(path, opt).then(function(r){
+      return r.text().then(function(t){
+        var j = {};
+        try { j = t ? JSON.parse(t) : {}; } catch(e){}
+        if (!r.ok){ var e = new Error(j.error || ('HTTP ' + r.status)); e.status = r.status; throw e; }
+        return j;
+      });
+    });
+  }
+
+  function doLogin(){
+    $('msg').textContent = '';
+    api('/api/login', { method:'POST', body: { email: $('email').value.trim(), password: $('password').value } })
+      .then(function(j){
+        if (j.role !== 'admin'){ $('msg').textContent = '这个账号不是管理员'; return; }
+        $('password').value = '';
+        boot();
+      })
+      .catch(function(e){ $('msg').textContent = e.message; });
+  }
+
+  function boot(){
+    api('/api/me').then(function(j){
+      if (j.account.role !== 'admin') throw new Error('这个账号不是管理员');
+      me = j;
+      $('who').textContent = j.account.email;
+      $('btnOut').style.display = '';
+      $('login').style.display = 'none';
+      $('app').style.display = '';
+      loadAll();
+    }).catch(function(){
+      $('login').style.display = '';
+      $('app').style.display = 'none';
+      $('btnOut').style.display = 'none';
+    });
+  }
+
+  function loadAll(){ loadStats(); loadFamilies(); loadAudit(); }
+
+  function loadStats(){
+    api('/api/admin/stats').then(function(j){
+      ['families','accounts','devices','logins'].forEach(function(k){
+        var id = 't' + k.charAt(0).toUpperCase() + k.slice(1);
+        $(id).textContent = (k === 'logins' ? j.logins_7d : j[k]);
+      });
+    }).catch(function(e){ $('msg').textContent = e.message; });
+  }
+
+  function fmt(ts){
+    if (!ts) return '—';
+    var d = new Date(ts * 1000);
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' +
+           String(d.getDate()).padStart(2,'0') + ' ' +
+           String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  }
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+
+  function loadFamilies(){
+    api('/api/admin/families').then(function(j){
+      var body = $('famBody');
+      body.innerHTML = '';
+      j.families.forEach(function(f){
+        var tr = document.createElement('tr');
+        var accts = f.accounts.map(function(a){
+          return '<div class="acct' + (a.disabled ? ' off' : '') + '">' + esc(a.email) +
+                 (a.disabled ? '（已停用）' : '') +
+                 ' <a href="#" data-a="' + a.id + '" data-d="' + (a.disabled ? '0' : '1') +
+                 '" class="toggle" style="color:var(--accent);font-size:11px;">' +
+                 (a.disabled ? '启用' : '停用') + '</a></div>';
+        }).join('');
+        tr.innerHTML =
+          '<td><b>' + esc(f.name) + '</b><div class="badge">' + esc(f.id) + '</div></td>' +
+          '<td>' + fmt(f.created_at) + '</td>' +
+          '<td>' + (accts || '—') + '</td>' +
+          '<td>' + f.devices + '</td>' +
+          '<td><div class="row-actions">' +
+            '<button class="ghost" data-x="' + f.id + '">导出</button>' +
+            '<button class="danger" data-p="' + f.id + '" data-n="' + esc(f.name) + '">删除</button>' +
+          '</div></td>';
+        body.appendChild(tr);
+      });
+      body.querySelectorAll('a.toggle').forEach(function(a){
+        a.onclick = function(e){
+          e.preventDefault();
+          var disabled = a.getAttribute('data-d') === '1';
+          api('/api/admin/accounts/' + a.getAttribute('data-a') + '/disable',
+              { method:'POST', body:{ disabled: disabled } })
+            .then(loadFamilies).catch(function(err){ alert(err.message); });
+        };
+      });
+      body.querySelectorAll('button[data-x]').forEach(function(b){
+        b.onclick = function(){ exportFamily(b.getAttribute('data-x')); };
+      });
+      body.querySelectorAll('button[data-p]').forEach(function(b){
+        b.onclick = function(){ purgeFamily(b.getAttribute('data-p'), b.getAttribute('data-n')); };
+      });
+    }).catch(function(e){ alert(e.message); });
+  }
+
+  function loadAudit(){
+    api('/api/admin/audit?limit=100').then(function(j){
+      var body = $('auditBody');
+      body.innerHTML = '';
+      j.audit.forEach(function(a){
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + fmt(a.ts) + '</td><td>' + esc(a.action) + '</td>' +
+                       '<td>' + esc(a.actor_id || '—') + '</td>' +
+                       '<td>' + esc(a.detail || '—') + '</td><td>' + esc(a.ip || '—') + '</td>';
+        body.appendChild(tr);
+      });
+    }).catch(function(e){ /* 静默 */ });
+  }
+
+  function exportFamily(id){
+    api('/api/admin/families/' + id + '/export').then(function(j){
+      var blob = new Blob([JSON.stringify(j, null, 2)], { type:'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'family-' + id + '.json';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }).catch(function(e){ alert(e.message); });
+  }
+
+  function purgeFamily(id, name){
+    var t = prompt('这会删除「' + name + '」的账号、设备和会话（不可恢复）。\n输入 DELETE 确认：');
+    if (t !== 'DELETE') return;
+    api('/api/admin/families/' + id + '/purge', { method:'POST', body:{ confirm:'DELETE' } })
+      .then(loadAll).catch(function(e){ alert(e.message); });
+  }
+
+  function logout(){
+    api('/api/logout', { method:'POST' }).catch(function(){}).then(function(){
+      location.reload();
+    });
+  }
+
+  ['email','password'].forEach(function(id){
+    $(id).addEventListener('keydown', function(e){ if (e.key === 'Enter') doLogin(); });
+  });
+
+  boot();
+</script>
+</body>
+</html>
