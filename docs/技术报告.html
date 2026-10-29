@@ -165,7 +165,7 @@ chunked 响应读完即停、回复卡死的看门狗自恢复、开机自动校
 <h3>3.2 系统方案设计</h3>
 <h4>3.2.1 系统总体架构</h4>
 <pre><code>┌──────────────────────────────────────────────────────────────┐
-│  kid_buddy（本作品主体，4200+ 行 C，独立 LVGL 应用）           │
+│  kid_buddy（本作品主体，4500+ 行 C，独立 LVGL 应用）           │
 │                                                              │
 │  LVGL 脸谱界面 ── 角色状态机 ── 剧情会话管理 ── 字幕排版        │
 │  VAD 采集循环 ── 唤醒匹配 ── TTS 流水线 ── 追问窗口             │
@@ -330,9 +330,49 @@ openvela</strong>，另两个节点刻意做成了零安装：</p>
 </tr>
 </tbody>
 </table>
-<p>家长端和板子之间只隔着 MQTT（topic <code>agent/in</code> / <code>agent/out</code>），用的就是 ai_agent 原有
-的入站 / 出站格式（<code>{"type":"message","content":…,"chat_id":…}</code>），<strong>板子这一侧的代码
-一行没改</strong>。也就是说，将来要换成手机原生 App、或者接一个智能音箱，设备端还是不用动。</p>
+<p>家长端和板子之间只隔着 MQTT（topic <code>agent/in</code> / <code>agent/out</code>）。<strong>普通的收发消息用的就是
+ai_agent 原有的入站 / 出站格式</strong>（<code>{"type":"message","content":…,"chat_id":…}</code>），
+设备端一行没改；将来要换成手机原生 App、或者接一个智能音箱，这条路仍然不用动设备端。</p>
+<p><strong>（7）孩子分享的冒险：家长端的长期档案。</strong> 在上面那套「家长端只读状态」之外，
+这是唯一一条<strong>给家长看内容</strong>的链路——而且只传孩子主动同意分享的部分。</p>
+<ul>
+<li><strong>分享闸门做在板子上，不在网页上。</strong> 故事会话（<code>kid_buddy:story</code>）是孩子自己的
+  完整剧情，用于续讲；孩子说「把这次冒险放进故事书 / 分享给妈妈」时，板子按这次
+  冒险的起始时间把对应的会话行切出来，追加进独立的分享档案 <code>kid_buddy:share</code>。
+  家长端同步的是后者，所以即使网页想多要，也拿不到没分享的剧情。</li>
+<li><strong>取数不经过 Agent。</strong> 家长端发 <code>{"type":"history","target":"kid_buddy:share",
+  "chat_id":"parent"}</code>，MQTT 通道直接调 <code>session_get_history_json_ts()</code> 读分享档案
+  回发。这件事是纯取数据，绕一次 LLM 既慢又会被模型改写，直连更合适。带 <code>ts</code>
+  是给家长端按天分组和日报用的；LLM 那条路径仍然用不带 <code>ts</code> 的版本，避免把
+  未知字段塞进 messages 数组。</li>
+<li><strong>传输是切片限速的。</strong> MQTT 的发送缓冲只有 <code>AGENT_MQTT_BUF_SIZE</code> = 1024 字节，
+  一条历史塞不下；而 <code>mqtt_publish</code> 是往缓冲里写，背靠背连发会撞上
+  <code>MQTT_ERROR_SEND_BUFFER_IS_FULL</code>。做法是切成 384 字节的片、每片独立 base64，
+  <strong>由已有的 MQTT sync 线程每 200 ms 发一片</strong> —— 借现成的节奏限速，
+  既不开新线程也不会撑爆缓冲。实测十轮冒险（3621 字节）切成 10 片，单片 payload 最大 607 字节。</li>
+<li><strong>分片拼接有个必须避开的坑。</strong> 各片的 base64 字符串<strong>不能拼接后整体解码</strong>：
+  每片字节数不整除 3 时末尾带 <code>=</code> 填充，拼起来解码是错位的（实测 3621 字节只剩 767 字节
+  活下来）。正确做法是每片各自解码成字节、再把字节拼起来，最后整体做一次 UTF-8 解码。
+  这样片与片之间哪怕正好切断一个汉字也不影响——字节流拼回去就复原了。</li>
+<li><strong>长期档案存在手机那侧。</strong> 板子每个会话只保留最近 <code>AGENT_SESSION_MAX_MSGS</code>（20）条
+  并滚动截断，所以每次同步是把新出现的合并进家长端本地，按 <code>(role, ts, content)</code> 去重。
+  <strong>板子是窗口，手机是档案</strong>——孩子玩得越久，手机上的记录比板子上能留住的越多。</li>
+</ul>
+<p><strong>（8）世界角色主动邀请孩子回来。</strong> 产品上这是「主动技能」：板子不等唤醒词，自己开口。
+实现上它复用了已有的空闲检测，但有三个不显然的约束：</p>
+<ul>
+<li><strong>邀请要落在故事会话里。</strong> 孩子这时已经退出故事模式了，如果照普通主动搭话发到默认
+  会话，模型看不到上次讲到哪，只能说一句空泛的「回来玩吧」。所以这一轮带一个显式的
+  <code>chat_id</code> 覆盖，直接发到故事会话；孩子一接话，下一轮把故事模式重新打开，剧情从
+  断开的地方继续，分享时也不会把前半截切掉（<code>g_story_started_at</code> 保持不变）。</li>
+<li><strong>开口是有代价的，门槛必须写死。</strong> 静默 5 分钟才邀请；两次至少隔 20 分钟、一天最多
+  3 次；睡前时段、时钟未校准、没连网一律不说话。晚上十点板子突然有人声，比它一直
+  不吭声糟糕得多。</li>
+<li><strong>接话有保质期。</strong> 邀请后 10 分钟内孩子开口才自动回到故事模式；超过这个窗口，
+  否则他随口问一句「今天天气怎么样」就会被拽进剧情。</li>
+</ul>
+<p>同一次改动顺手修了空闲续讲的老问题：主动那一轮会把空闲时钟归零，而原来的实现没有
+「这个离开已经问过」的标志，孩子不理它就会每 60 秒重复问一次。现在一个离开只问一次。</p>
 <h3>3.3 核心算法与技术原理</h3>
 <h4>3.3.1 AI 算法实现</h4>
 <p><strong>端侧模型：不部署。</strong> 板子的内存与算力预算放不下一个可用的语音或语言模型，所以端侧
@@ -365,7 +405,7 @@ openvela</strong>，另两个节点刻意做成了零安装：</p>
 <tr>
 <td>语音合成</td>
 <td><code>mimo-v2.5-tts</code></td>
-<td><code>https://token-plan-cn.xiaomimimo.com/v1/chat/completions</code>，音色「冰糖」，输出 <code>pcm16</code></td>
+<td><code>https://token-plan-cn.xiaomimimo.com/v1/chat/completions</code>，默认音色「冰糖」，故事模式按角色切换（冰糖 / 茉莉 / 苏打 / 白桦），输出 <code>pcm16</code></td>
 <td>Bearer API Key</td>
 </tr>
 </tbody>
@@ -495,7 +535,7 @@ CJK 16.00 px，但常见的「U+2000 以上是全角」是错的——实际有 
 </ol>
 <h3>3.4 系统实现</h3>
 <h4>3.4.1 软件 / 固件架构</h4>
-<p>作品主体是一个文件、一个进程：<code>app/kid_buddy/kid_buddy.c</code>（约 4200 行 C），在 NuttX 上
+<p>作品主体是一个文件、一个进程：<code>app/kid_buddy/kid_buddy.c</code>（约 4500 行 C），在 NuttX 上
 作为一个独立应用由启动脚本拉起。它自己不起 Agent 主循环，而是通过 <code>velaclaw_ask()</code> 把
 请求推进消息总线，由一个常驻的 ai_agent 实例处理——包括工具调用、会话管理、记忆落盘与
 定时任务。两者之间只有两个方向的接口：请求（ask）与<strong>非请求的消息推送</strong>（notify 回调，
@@ -509,7 +549,7 @@ CJK 16.00 px，但常见的「U+2000 以上是全角」是错的——实际有 
 <pre><code>contest2026_086_ditiekouyegoulianmeng/
 ├── app/kid_buddy/        应用主体（kid_buddy.c + 板级配置 + 技能设计稿）
 ├── board/nsh_minidisplay/ 板级 defconfig
-├── upstream/             两个上游仓改动过的 42 个文件的成品
+├── upstream/             两个上游仓改动过的 43 个文件的成品
 ├── image/                预编译固件（.img + sha256）
 ├── docs/                 技术报告、作品介绍、演示视频脚本
 ├── phone-app/            家长端网页（MQTT over WebSocket）
@@ -693,6 +733,70 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </table>
 <p>它们与运行时 Skill 是两回事：前者让「下一次开发别再踩同一个坑」，后者让「设备上的 Agent
 在特定场景下会做事」。</p>
+<h4>3.4.6 现场可靠性增补（决赛版）</h4>
+<p>决赛是<strong>现场实机演示</strong>，演示现场的网络与设备状态都不可控。这一轮增补的四项改动不是加功能，
+而是把「一旦出问题能不能立刻看出来、能不能自己恢复」这件事做实。四项都以<strong>不改动主链路</strong>
+为设计约束——每条都做了「条件不成立时行为与改动前完全一致」的兜底。</p>
+<p><strong>一、开机连多个候选网络，手机热点兜底。</strong> 板子原来只会连 <code>/data/etc/wifi/wapi.conf</code> 里
+写死的那一个 SSID，换到另一个网络就得改配置。现在按顺序尝试
+<code>/data/etc/wifi/networks.d/0{1,2,3}.conf</code>，连上即停，最后再用 <code>wapi.conf</code> 兜底；
+第一个拿到 IP 的会写成新的默认。</p>
+<blockquote>
+<p><strong>这段逻辑最初写在 shell 脚本里，在真板上完全不工作 —— 这是本项目最贵的一课。</strong>
+这块板子的 <code>sh</code> 是 NSH，而 NSH：没有位置参数（<code>$1/$2</code> 永远是空）、没有
+<code>VAR=value</code> 赋值（每一行都被当成命令）、镜像里没有 <code>grep</code>、不支持 <code>for/while</code>，
+而且 <code>CONFIG_NSH_LINELEN=64</code> 会把长注释行切成几段当命令执行。结果是串口刷满
+<code>command not found</code>，最后拿空 SSID 去连、拿到 <code>10.0.0.2</code> 这样的假地址。
+更糟的是它会「跑完」——<strong>「没报错」在这类 shell 上不成立，「跑完了」也不等于
+「按你写的跑了」。</strong></p>
+<p>v2.81 把候选逻辑搬进 C（<code>network_wifi_boot_connect()</code>，<code>network_manager.c</code>）：
+用 cJSON 读候选文件，<code>wifi_join()</code> 复用 <code>set_wifi</code> 的同一条连接路径（所以经过
+上板验证的代码就是现在开机跑的代码），<code>/etc/wifi/start_wifi.sh</code> 只剩一句用法提示，
+<code>rcS.nsh</code> 里对它的调用删掉。候选目录由 ai_agent 开机时自己 <code>mkdir</code>
+（NSH 没有 mkdir 命令），加一个备选网络只要一行 <code>echo</code>，仍然不需要重新烧录。
+教训：<strong>受限 shell 上的「逻辑正确」不构成可用性，必须在目标 shell 上跑过。</strong></p>
+</blockquote>
+<p><strong>二、开机自检，把「现在能不能开工」写在字幕板上。</strong> 启动后每秒读两个非阻塞标志位——
+<code>network_is_connected()</code>（拿到 IP 没有）与 <code>agent_clock_is_verified()</code>（时钟校过没有），
+结论变化时更新字幕板：</p>
+<table>
+<thead>
+<tr>
+<th>字幕板显示</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>自检：网络通、已校时，可以开始</code></td>
+<td>一切正常，可以上台</td>
+</tr>
+<tr>
+<td><code>自检：还没联网，只能看到脸</code></td>
+<td>没连上网</td>
+</tr>
+<tr>
+<td><code>自检：网络通了，但时间没校上</code></td>
+<td>云端 ASR / LLM / TTS 会全部失败</td>
+</tr>
+</tbody>
+</table>
+<p>第二项是重点。本板无 RTC，系统时钟在开机时是 1970；时间不对会让 mbedTLS 的证书
+<code>notBefore</code> 校验全部失败，三条云端链路一起哑掉，<strong>而界面上没有任何异常</strong>——脸照常动、
+字幕照常空着，看起来只是「它不想理你」。这是现场最难定位的一类故障，因此宁可开机就写在
+字幕板上（字幕板本就是给旁边的大人看的）。测出「可以开始」后自检即停止工作，不再干扰字幕。</p>
+<p><strong>三、MQTT 出站链路的可观测性。</strong> 见 3.7.3 第 6 条的历史故障。本轮补上了三个计数器
+（成功 / 失败 / 丢弃）、更完整的失败日志（连同 MQTT-C 自身的 <code>client.error</code> 与
+<code>send_offset</code> 一起打印），以及同步线程里的一条看门狗：每秒检查错误状态是否变化、
+是否卡在半截发送、是否曾经发得出去但已静默两分钟。<strong>正常情况下这三条一个字符都不会输出</strong>，
+日志里一旦出现 <code>WATCHDOG</code> 就是可直接顺着查的线索。</p>
+<p><strong>四、输出侧内容安全过滤。</strong> 见 3.7.3 第 3 条。回复文本在既有清洗（emoji / Markdown / 引号）
+之后再过一道硬过滤，命中即整段替换为一句安全话，<strong>原文既不合成语音也不上屏</strong>，同时写一条
+告警日志。词表刻意做窄，只收自残 / 自杀、性内容、毒品、危险操作指导四类；
+<strong>有意不收泛泛的暴力词</strong>——童话里大灰狼吃人、打怪兽都是正常情节，收了会把角色扮演主线误杀。
+词表经过误杀检查：16 条正常回复 0 命中（「上床」这类一词两义的词已被剔除，
+否则「该上床睡觉了」会被整段吞掉）。<strong>局限</strong>：词表目前编译在固件里，
+家长运行时可配需要新增配置项，这一版未做。</p>
 <h3>3.5 系统测试与结果分析</h3>
 <blockquote>
 <p>本节区分三类数据，口径写在每张表的「口径」列里，不混为一谈：
@@ -714,7 +818,7 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </tr>
 <tr>
 <td>固件</td>
-<td>本队交付镜像 <code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.67.img</code>（v2.67）</td>
+<td>本队交付镜像 <code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.70.img</code>（v2.70）</td>
 </tr>
 <tr>
 <td>系统</td>
@@ -735,7 +839,10 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 </tbody>
 </table>
 <h4>3.5.2 功能测试</h4>
-<p>固件 v2.67 已在真机上逐条跑过，结果如下：</p>
+<p>下表是 <strong>v2.67</strong> 在真机上逐条跑过的结果（2026-09-19）。v2.67 是本作品<strong>最后一份完整上板
+验证过的固件</strong>；决赛版 <strong>v2.70</strong> 在它之上增加了四项工程改动（见 3.4.6，均以「不改动主链路」
+为设计约束）与一项新功能（孩子的冒险记录，见 3.2.3 第 7 项），增补部分的上板验证方法逐项
+列在仓内 <code>docs/上板验证清单.md</code>，随决赛演示一并复验。</p>
 <table>
 <thead>
 <tr>
@@ -1033,7 +1140,7 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 <tbody>
 <tr>
 <td>AI Coding 代码占比</td>
-<td><strong>&gt; 60%</strong>（口径：以本队专属仓提交的代码行数为分母，其中由 AI 生成、再经人工审阅修改后提交的行数占比。主体 <code>kid_buddy.c</code> 约 4200 行以及 ai_agent / vendor 侧的改动均由 Claude Code 协作产出；人承担的是需求决策、接口与人设设计、上板验证、串口日志定位与真机调试，以及全部提交前的代码审阅。取 60% 是保守估计——按「AI 是否参与过这段代码」计会更接近 100%，但那样算把人工重写和调试返工也算成了 AI 的产出）</td>
+<td><strong>&gt; 60%</strong>（口径：以本队专属仓提交的代码行数为分母，其中由 AI 生成、再经人工审阅修改后提交的行数占比。主体 <code>kid_buddy.c</code> 约 4500 行以及 ai_agent / vendor 侧的改动均由 Claude Code 协作产出；人承担的是需求决策、接口与人设设计、上板验证、串口日志定位与真机调试，以及全部提交前的代码审阅。取 60% 是保守估计——按「AI 是否参与过这段代码」计会更接近 100%，但那样算把人工重写和调试返工也算成了 AI 的产出）</td>
 </tr>
 <tr>
 <td>使用的 AI 工具</td>
@@ -1076,7 +1183,7 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
 <h3>3.7 总结与展望</h3>
 <h4>3.7.1 成果总结</h4>
 <ul>
-<li>一台可运行、可演示的儿童语音 AI 伙伴，交付预编译固件（v2.67）与完整源码。</li>
+<li>一台可运行、可演示的儿童语音 AI 伙伴，交付预编译固件（v2.70）与完整源码。</li>
 <li>四条基础要求全部落地：跑起来（编译 / 烧录 / 配 LLM / 三条交互渠道）、自定义 Skill
   （运行时 <code>story-rpg</code> + 开发期 4 个）、主动+执行场景（定时主动 + 上下文主动）、完整的
   应用场景说明。</li>
@@ -1086,7 +1193,9 @@ VAD，表现为板子自己把自己唤醒）；启动脚本改为拉起 kid_bud
   <code>packages_ai_agent</code> #33 / #34 / #35 / #36、<code>vendor_allwinnertech</code> #21。这 5 个 PR
   尚未合入，对应的文件成品随本仓 <code>upstream/</code> 交付并由 manifest 覆盖回工作区，因此
   <strong>源码路径不依赖上游合并</strong>，<code>repo sync</code> 之后即可直接构建。</li>
-<li>界面在 v2.64–v2.67 之间完成四次迭代，v2.67 已在真机上逐条验证通过。</li>
+<li>界面在 v2.64–v2.67 之间完成四次迭代，v2.67 已在真机上逐条验证通过；决赛版 v2.70
+  在此基础上补入四项现场可靠性改动（见 3.4.6）与孩子的冒险记录（见 3.2.3 第 7 项），
+  主链路未变。</li>
 </ul>
 <h4>3.7.2 应用前景与商业价值</h4>
 <p><strong>目标受众。</strong> 核心是 6–12 岁、已能顺畅说话但识字有限的城市儿童，购买决策者是家长
@@ -1120,18 +1229,22 @@ ASR / TTS 接口，没有自建服务端）、<strong>内容可运营</strong>�
 <li><strong>端侧没有模型，断网就只剩一张困倦的脸。</strong> 识别与合成都在云上，所以没网的时候连
    唤醒词都认不出来。下一步的方向是把唤醒与简单的意图分类放到端侧（小模型或规则），
    至少做到断网时仍能响应唤醒、执行几个固定指令（比如「继续讲故事」放本地缓存的音频）。</li>
-<li><strong>内容安全机制还比较基础。</strong> 目前依赖提示词约束与技能里的规则。面向儿童的产品需要
-   更硬的手段：输出侧的关键词与话题过滤、家长可配置的话题白名单、对话记录可查。</li>
+<li><strong>内容安全做了一半。</strong> 决赛版补上了输出侧的硬过滤（见 3.4.6 第四项）：四类高危词
+   命中即整段替换，既不合成语音也不上屏。但<strong>词表目前编译在固件里，家长改不了</strong>；
+   面向儿童的产品还需要家长可配置的话题白名单、可查的对话记录，以及比关键词更细的
+   话题级判断——关键词能拦住的只是最直白的那一类。</li>
 <li><strong>交互维度单一。</strong> 目前只有语音 + 四条书签带。孩子对「戳一下」「摸一下头」这类
    具身交互的反应远好于点按，未来可加入更多传感器（触摸、加速度、光线）来丰富表达。</li>
 <li><strong>性能数据还不完整。</strong> 本报告 3.5.3 / 3.5.4 中标注为【待实测】的项（端到端延迟、
    内存占用、功耗、连续运行时长、识别率）需要在下一轮补齐，作为工程化依据。</li>
-<li><strong>MQTT 出站链路出现过一次未复现的故障，尚未定位根因。</strong> 2026-09-15 遇到过「板子
-   收得到、一条都发不出」，当晚重烧固件并重配后自愈，之后没有再出现，因此根因至今
-   未查明。相关背景是：出站派发是单线程，一旦被某个慢连接卡住，<strong>所有通道会同时哑掉</strong>
-   （语音、CLI、MQTT 一起不出声），而发送失败在日志里完全不可见。目前已经把这个线程上
-   的几个阻塞点改成带超时或先释放锁，但缺的是<strong>可观测性</strong>——下一轮应给这条链路补上
-   发送失败告警与队列深度上报，否则再犯时仍然只能靠猜。</li>
+<li><strong>MQTT 出站链路的根因仍未定位，但已经能被看见了。</strong> 2026-09-15 出现过「板子收得到、
+   一条都发不出」，当晚重烧固件并重配后自愈，之后未再出现，根因至今未查明。背景是：
+   出站派发是单线程，一旦被某个慢连接卡住，<strong>所有通道会同时哑掉</strong>（语音、CLI、MQTT
+   一起不出声），而发送失败在日志里完全不可见。此前已把该线程上的几个阻塞点改成带超时
+   或先释放锁；决赛版补上了<strong>可观测性</strong>（见 3.4.6 第三项）——成功/失败/丢弃三个计数器，
+   外加同步线程里一条每秒检查的看门狗。日志里一旦出现 <code>WATCHDOG</code>，就能看出是<strong>从哪一秒
+   开始、卡在什么状态、此前一共发出去过几条</strong>。<strong>仍未解决的是复现与根因</strong>：下一次再犯时，
+   日志终于能给出足够定位的线索，而不是只能靠猜。</li>
 </ol>
 <hr />
 <h2>4、评审维度对照</h2>
@@ -1193,7 +1306,7 @@ ASR / TTS 接口，没有自建服务端）、<strong>内容可运营</strong>�
 </tr>
 <tr>
 <td>预编译固件</td>
-<td>仓内 <code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.67.img</code></td>
+<td>仓内 <code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.70.img</code></td>
 </tr>
 <tr>
 <td>AI Coding 日志</td>

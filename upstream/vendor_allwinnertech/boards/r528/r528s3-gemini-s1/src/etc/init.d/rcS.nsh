@@ -83,10 +83,8 @@ fi
 ntpcstart &
 #endif
 
-if [ -f /data/etc/wifi/wapi.conf ]
-then
-  sh /etc/wifi/start_wifi.sh &
-fi
+/* WiFi is brought up by ai_agent (network_wifi_boot_connect).
+ * start_wifi.sh was a POSIX script, NSH cannot run it. */
 
 #ifdef CONFIG_LUNCHER_MINI_APP
 luncher_mini &

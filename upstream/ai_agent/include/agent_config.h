@@ -156,7 +156,7 @@
 /* ── MiMo (Xiaomi MiMo platform) ───────────────────────────── */
 #define AGENT_LLM_MIMO_HOST "api.xiaomimimo.com"
 #define AGENT_LLM_MIMO_PATH "/v1/chat/completions"
-#define AGENT_LLM_MIMO_MODEL "mimo-v2-flash"
+#define AGENT_LLM_MIMO_MODEL "mimo-v2.6-flash"
 
 /* ── Message Bus ────────────────────────────────────────────── */
 #define AGENT_BUS_QUEUE_LEN 16
@@ -326,7 +326,12 @@
 /* ── MQTT Channel ───────────────────────────────────────────── */
 #define AGENT_MQTT_DEFAULT_PORT 1883
 #define AGENT_MQTT_KEEPALIVE 60
-#define AGENT_MQTT_BUF_SIZE 1024
+/* 2048 不是随手定的：这条缓冲同时装着「已发出去、还没等到 PUBACK」的消息。
+ * 故事记录是 QoS1 背靠背发片，每片约 450 字节，1024 只够放一片 ——
+ * 第二片必然撞上 MQTT_ERROR_SEND_BUFFER_IS_FULL（-2147483632），
+ * 而这个错误在 MQTT-C 里是粘性的，只能靠整条连接重连清掉。
+ * 实测就是 6 片里第 2/4/6 片全丢。2048 能放两片还有富余。 */
+#define AGENT_MQTT_BUF_SIZE 2048
 #define AGENT_MQTT_STACK (12 * 1024)
 #define AGENT_MQTT_PRIO 45
 #define AGENT_MQTT_SYNC_INTERVAL_MS 200

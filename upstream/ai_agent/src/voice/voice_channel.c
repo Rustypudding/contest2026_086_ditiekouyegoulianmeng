@@ -39,6 +39,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1092,6 +1093,75 @@ static char* tts_slice_dup(const char* s, int len)
  * so a slow network can't exhaust memory; a fetch slower than its sentence's
  * playback just leaves a brief silence before the next sentence. */
 
+/* ── 故事模式的多角色声线 ──────────────────────────────────────
+ *
+ * 故事模式的提示词要求模型按「阿岚：…」「旁白：…」分段（见 kid_buddy.c
+ * 的 STORY_WORLD_HINT）。这里只在每句开头认这个名字：认出来就换音色，
+ * 并把「名字：」从送去合成的文本里剪掉 —— 屏幕和家长端故事书看到的
+ * 仍是完整的一行，只有 TTS 不把标签念出来。
+ *
+ * 模型漏标只会退回上一个音色（默认旁白），不会报错，也不会少念字。
+ * 音色是 MiMo 的预置中文音色；四个正好把旁白和三个居民分开。 */
+typedef struct {
+    const char* name;
+    const char* voice;
+} story_voice_t;
+
+static const story_voice_t s_story_voices[] = {
+    { "旁白",   "冰糖" },   /* 清澈少女：旁白 / 小家伙自己 */
+    { "阿岚",   "白桦" },   /* 成熟男声：守灯人阿岚 */
+    { "栗子",   "苏打" },   /* 阳光少年：小狐狸栗子 */
+    { "圆婆婆", "茉莉" },   /* 知性女声：星星集市的圆婆婆 */
+};
+
+#define STORY_VOICE_COUNT \
+    (sizeof(s_story_voices) / sizeof(s_story_voices[0]))
+
+static bool starts_with(const char* s, const char* end, const char* lit)
+{
+    size_t n = strlen(lit);
+    return (size_t)(end - s) >= n && strncmp(s, lit, n) == 0;
+}
+
+/* s 开头是「名字：」（也接受「名字说：」「名字说道：」）时，返回从 s 起
+ * 要跳过多少字节（含前导空白），并通过 voice 返回音色；不是标签返回 -1。 */
+static int story_speaker_prefix(const char* s, const char* end,
+                                const char** voice)
+{
+    const char* orig = s;
+
+    while (s < end && (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')) {
+        s++;
+    }
+
+    for (size_t i = 0; i < STORY_VOICE_COUNT; i++) {
+        size_t n = strlen(s_story_voices[i].name);
+        const char* p;
+
+        if ((size_t)(end - s) < n || strncmp(s, s_story_voices[i].name, n) != 0) {
+            continue;
+        }
+
+        p = s + n;
+        if (starts_with(p, end, "说道：")) {
+            p += strlen("说道：");
+        } else if (starts_with(p, end, "说：")) {
+            p += strlen("说：");
+        } else if (starts_with(p, end, "：")) {
+            p += strlen("：");
+        } else if (p < end && *p == ':') {
+            p++;
+        } else {
+            continue;   /* 「阿岚笑了笑」不是说话标签 */
+        }
+
+        *voice = s_story_voices[i].voice;
+        return (int)(p - orig);
+    }
+
+    return -1;
+}
+
 #define TTS_PIPE_CAP 2
 
 typedef struct {
@@ -1100,6 +1170,7 @@ typedef struct {
     tts_buf_t       slots[TTS_PIPE_CAP];
     const char* const* slice_start;
     const int*      slice_len;
+    const char* const* slice_voice;   /* 每句的 MiMo 预置音色 */
     int             nslices;
     int             put_idx;        /* producer fills slots[put_idx] */
     int             get_idx;        /* consumer drains slots[get_idx] */
@@ -1136,6 +1207,9 @@ static void* tts_fetch_thread(void* arg)
             if (!sent) {
                 b->rc = -ENOMEM;
             } else {
+                /* 换声线只改下一句请求里的 voice 字段，不多一次往返；
+                 * 后端没有预置音色时返回 -ENOTSUP，保持默认即可。 */
+                (void)voice_tts_set_voice(p->slice_voice[i]);
                 int r = voice_tts_speak_stream(sent, tts_capture_cb, b);
                 free(sent);
                 /* Keep a capture failure (e.g. -ENOMEM) over a clean backend result. */
@@ -1165,10 +1239,15 @@ static void* tts_fetch_thread(void* arg)
 
 static int tts_speak_chunked(const char* text, audio_playback_t* pb)
 {
-    /* First pass: split into sentence slices. */
+    /* First pass: split into sentence slices, and tag each slice with the
+     * voice of whoever is speaking. A slice without a 「名字：」 prefix
+     * inherits the previous voice, so narration keeps one voice and a
+     * missing label degrades to that instead of breaking. */
     #define MAX_SLICES 128
     const char* slice_start[MAX_SLICES];
     int slice_len[MAX_SLICES];
+    const char* slice_voice[MAX_SLICES];
+    const char* cur_voice = s_story_voices[0].voice;   /* 旁白 */
     int nslices = 0;
 
     const char* start = text;
@@ -1202,9 +1281,21 @@ static int tts_speak_chunked(const char* text, audio_playback_t* pb)
         }
 
         if (end > start) {
-            slice_start[nslices] = start;
-            slice_len[nslices] = (int)(end - start);
-            nslices++;
+            const char* voice = cur_voice;
+            int skip = story_speaker_prefix(start, end, &voice);
+
+            if (skip >= 0) {
+                cur_voice = voice;   /* 标签只影响这一句及后续，不念出来 */
+            } else {
+                skip = 0;
+            }
+
+            if (end > start + skip) {
+                slice_start[nslices] = start + skip;
+                slice_len[nslices] = (int)(end - (start + skip));
+                slice_voice[nslices] = cur_voice;
+                nslices++;
+            }
         }
 
         if (*end == '\0') {
@@ -1223,6 +1314,7 @@ static int tts_speak_chunked(const char* text, audio_playback_t* pb)
     pthread_cond_init(&p.cond, NULL);
     p.slice_start = slice_start;
     p.slice_len = slice_len;
+    p.slice_voice = slice_voice;
     p.nslices = nslices;
 
     int first_err = 0;
@@ -1248,6 +1340,7 @@ static int tts_speak_chunked(const char* text, audio_playback_t* pb)
                 }
                 continue;
             }
+            (void)voice_tts_set_voice(slice_voice[i]);
             int r = voice_tts_speak_stream(sent, tts_capture_cb, &b);
             free(sent);
             if (b.rc == 0) {

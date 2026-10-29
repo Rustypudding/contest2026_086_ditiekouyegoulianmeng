@@ -22,18 +22,20 @@
       必须是 <copyfile>，不能换成 <linkfile>：linkfile 在目标位置已经存在同名
       普通文件时不会覆盖（repo 的 removedirs() 只清 symlink 和空目录，遇到普通
       文件就停下），链接失败只在日志里报一行 error，树里留的还是上游原文件。
-      这 42 个目标里有 38 个是上游本来就有的文件，用 linkfile 会静默失效。
+      这 49 个目标里有 43 个是上游本来就有的文件，用 linkfile 会静默失效。
 
       文件内容是这两个仓合入我们 PR 之后的状态；PR 合了就可以把这份删掉。
     -->
 
-    <!-- ==== packages/ai_agent（39 个文件）==== -->
+    <!-- ==== packages/ai_agent（45 个文件）==== -->
     <copyfile src="upstream/ai_agent/Kconfig" dest="packages/ai_agent/Kconfig"/>
     <copyfile src="upstream/ai_agent/Makefile" dest="packages/ai_agent/Makefile"/>
     <copyfile src="upstream/ai_agent/include/agent_config.h" dest="packages/ai_agent/include/agent_config.h"/>
     <copyfile src="upstream/ai_agent/include/velaclaw/client.h" dest="packages/ai_agent/include/velaclaw/client.h"/>
     <copyfile src="upstream/ai_agent/include/voice/voice_tts.h" dest="packages/ai_agent/include/voice/voice_tts.h"/>
     <copyfile src="upstream/ai_agent/src/agent_main.c" dest="packages/ai_agent/src/agent_main.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/cmd_channel.c" dest="packages/ai_agent/src/channels/cmd_channel.c"/>
+    <copyfile src="upstream/ai_agent/src/channels/cmd_llm.c" dest="packages/ai_agent/src/channels/cmd_llm.c"/>
     <copyfile src="upstream/ai_agent/src/channels/cmd_voice.c" dest="packages/ai_agent/src/channels/cmd_voice.c"/>
     <copyfile src="upstream/ai_agent/src/channels/cmd_voice.h" dest="packages/ai_agent/src/channels/cmd_voice.h"/>
     <copyfile src="upstream/ai_agent/src/channels/mqtt_channel.c" dest="packages/ai_agent/src/channels/mqtt_channel.c"/>
@@ -43,8 +45,12 @@
     <copyfile src="upstream/ai_agent/src/core/agent_mem.h" dest="packages/ai_agent/src/core/agent_mem.h"/>
     <copyfile src="upstream/ai_agent/src/core/context_builder.c" dest="packages/ai_agent/src/core/context_builder.c"/>
     <copyfile src="upstream/ai_agent/src/core/message_bus.h" dest="packages/ai_agent/src/core/message_bus.h"/>
+    <copyfile src="upstream/ai_agent/src/core/session_mgr.c" dest="packages/ai_agent/src/core/session_mgr.c"/>
+    <copyfile src="upstream/ai_agent/src/core/session_mgr.h" dest="packages/ai_agent/src/core/session_mgr.h"/>
     <copyfile src="upstream/ai_agent/src/infra/cron_service.c" dest="packages/ai_agent/src/infra/cron_service.c"/>
     <copyfile src="upstream/ai_agent/src/infra/cron_service.h" dest="packages/ai_agent/src/infra/cron_service.h"/>
+    <copyfile src="upstream/ai_agent/src/infra/network_manager.c" dest="packages/ai_agent/src/infra/network_manager.c"/>
+    <copyfile src="upstream/ai_agent/src/infra/network_manager.h" dest="packages/ai_agent/src/infra/network_manager.h"/>
     <copyfile src="upstream/ai_agent/src/infra/vela_tls.c" dest="packages/ai_agent/src/infra/vela_tls.c"/>
     <copyfile src="upstream/ai_agent/src/infra/vela_tls.h" dest="packages/ai_agent/src/infra/vela_tls.h"/>
     <copyfile src="upstream/ai_agent/src/llm/llm_cache.c" dest="packages/ai_agent/src/llm/llm_cache.c"/>
@@ -68,9 +74,13 @@
     <copyfile src="upstream/ai_agent/src/voice/voice_tts.c" dest="packages/ai_agent/src/voice/voice_tts.c"/>
     <copyfile src="upstream/ai_agent/src/voice/volc_tts.c" dest="packages/ai_agent/src/voice/volc_tts.c"/>
 
-    <!-- ==== vendor/allwinnertech（3 个文件）==== -->
+    <!-- ==== vendor/allwinnertech（4 个文件）==== -->
     <copyfile src="upstream/vendor_allwinnertech/boards/r528/r528s3-gemini-s1/configs/nsh_minidisplay/defconfig" dest="vendor/allwinnertech/boards/r528/r528s3-gemini-s1/configs/nsh_minidisplay/defconfig"/>
     <copyfile src="upstream/vendor_allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/init.d/rcS.nsh" dest="vendor/allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/init.d/rcS.nsh"/>
+    <!-- 决赛 v2.81：开机连 WiFi 移到 C（network_wifi_boot_connect）——原来的
+         shell 脚本用了 NSH 不支持的位置参数、变量赋值、循环和 grep，在板子上
+         根本跑不起来。这个文件现在只剩一句提示。 -->
+    <copyfile src="upstream/vendor_allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/wifi/start_wifi.sh" dest="vendor/allwinnertech/boards/r528/r528s3-gemini-s1/src/etc/wifi/start_wifi.sh"/>
     <copyfile src="upstream/vendor_allwinnertech/chips/r528/drivers/rtos-hal/hal/source/sound/codecs/sun8iw20-codec.c" dest="vendor/allwinnertech/chips/r528/drivers/rtos-hal/hal/source/sound/codecs/sun8iw20-codec.c"/>
   </project>
 </manifest>

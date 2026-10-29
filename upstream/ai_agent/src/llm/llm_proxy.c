@@ -51,8 +51,8 @@ static char s_vision_model[64] = { 0 };
 static char s_vision_host[128] = { 0 };
 static char s_vision_api_key[128] = { 0 };
 
-/* MiMo thinking toggle: mimo-v2.5 is a hybrid reasoning model that "thinks"
- * by default (~90-100s per call).  When disabled we send
+/* MiMo thinking toggle: the v2.5 / v2.6 chat models are hybrid reasoning
+ * models that "think" by default (~90-100s per call).  When disabled we send
  * thinking:{"type":"disabled"} to cut latency to seconds.
  *
  * Default to DISABLED (fast) for the on-device kid buddy: 90-100s of
@@ -63,6 +63,8 @@ static char s_vision_api_key[128] = { 0 };
 static int s_thinking_disabled = 1;
 
 static pthread_mutex_t s_llm_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static const char* normalize_model_name(const char* model);
 
 /* Check if host uses OpenAI-compatible max_completion_tokens param */
 bool is_openai_compat_host(const char* host)
@@ -152,6 +154,21 @@ int llm_proxy_init(void)
     if (claw_config_get(AGENT_CFG_KEY_MODEL, tmp, sizeof(tmp)) == OK && tmp[0])
         strncpy(s_model, tmp, sizeof(s_model) - 1);
 
+    /* Retired MiMo names (V2.5 / V2.5-Pro, gone since 2026-10-21 10:00
+     * UTC+8) are rewritten to the V2.6 series and persisted, so a board
+     * flashed with an older config.json heals itself on boot. */
+    if (s_model[0]) {
+        const char* migrated = normalize_model_name(s_model);
+        if (migrated != s_model) {
+            syslog(LOG_WARNING,
+                "[%s] model '%s' retired, migrating to '%s'\n",
+                TAG, s_model, migrated);
+            strncpy(s_model, migrated, sizeof(s_model) - 1);
+            s_model[sizeof(s_model) - 1] = '\0';
+            claw_config_set(AGENT_CFG_KEY_MODEL, s_model);
+        }
+    }
+
     memset(tmp, 0, sizeof(tmp));
     if (claw_config_get(AGENT_CFG_KEY_LLM_HOST, tmp, sizeof(tmp)) == OK && tmp[0])
         strncpy(s_llm_host, tmp, sizeof(s_llm_host) - 1);
@@ -240,6 +257,9 @@ int llm_set_all(const char* host, const char* path,
         s_api_key[sizeof(s_api_key) - 1] = '\0';
     }
     if (model && model[0]) {
+        /* Router backends come from config and may still name a retired
+         * model; normalize here so every path that sets a model is covered. */
+        model = normalize_model_name(model);
         claw_config_set(AGENT_CFG_KEY_MODEL, model);
         strncpy(s_model, model, sizeof(s_model) - 1);
         s_model[sizeof(s_model) - 1] = '\0';
@@ -343,6 +363,42 @@ int llm_set_vision_model(const char* host, const char* model,
 /* ── HTTP helpers ─────────────────────────────────────────── */
 
 /**
+ * Map MiMo model names that Xiaomi has retired onto their successors.
+ *
+ * 2026-10-20 announcement: MiMo-V2.5 / V2.5-Pro were auto-forwarded to the
+ * V2.6 series from 2026-10-14 and stop being served entirely on
+ * 2026-10-21 10:00 (UTC+8), after which the old names fail.  Older boards
+ * still carry one of those names in config.json or in a router backend
+ * slot, so translate them here instead of making every user re-run
+ * set_llm.  Exact match only — mimo-v2.5-asr / mimo-v2.5-tts are still
+ * valid models and must not be touched.  Returns a literal when a
+ * replacement exists, otherwise the input pointer.
+ */
+static const char* normalize_model_name(const char* model)
+{
+    static const struct {
+        const char* old_name;
+        const char* new_name;
+    } map[] = {
+        { "mimo-v2.5", "mimo-v2.6-flash" },
+        { "mimo-v2.5-pro", "mimo-v2.6-pro" },
+        { "mimo-v2-flash", "mimo-v2.6-flash" },
+        { "mimo-v2-pro", "mimo-v2.6-pro" },
+        { NULL, NULL }
+    };
+    int i;
+
+    if (!model || !model[0])
+        return model;
+
+    for (i = 0; map[i].old_name; i++) {
+        if (strcmp(model, map[i].old_name) == 0)
+            return map[i].new_name;
+    }
+    return model;
+}
+
+/**
  * Return the model name to send in the API request.
  * Multi-provider gateways (e.g. OpenRouter) require the full
  * "provider/model" string, while single-vendor APIs expect only
@@ -356,7 +412,7 @@ const char* model_name_for_api(const char* model, const char* host)
     }
 
     const char* slash = strchr(model, '/');
-    return slash ? slash + 1 : model;
+    return normalize_model_name(slash ? slash + 1 : model);
 }
 
 /* Direct path via vela_tls */

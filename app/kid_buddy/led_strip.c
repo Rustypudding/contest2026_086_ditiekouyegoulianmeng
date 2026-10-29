@@ -1,0 +1,259 @@
+/****************************************************************************
+ * vendor/allwinnertech/apps/kid_buddy/led_strip.c
+ *
+ * 外接单色呼吸灯带。
+ *
+ * 硬件（详见 docs/呼吸灯带接线.md）：
+ *   H4 第 1 脚 (PG13, BT_PCM_DOUT) --100R--> MOS 管栅极，栅极再用 10k 下拉；
+ *   MOS 管源极接 GND，漏极接灯带负极，灯带正极接 5V（H6 第 7 脚）或外部电源。
+ *
+ * 软件：PG13 复用成 PWM2（功能 6），2 kHz，占空比由线程按 4 秒周期
+ * 做 gamma 校正的呼吸。
+ *
+ * 为什么不用 /dev/pwmN：NuttX 的 PWM lower-half 在每次 set-duty 时都会走
+ * hal_pwm_control()，而后者每次都会调 hal_pwm_pinctrl_init()，sys_config
+ * 里没有 pwm2 时会退回硬编码的 PE8（摄像头 OV_D5）——每 20 ms 把摄像头
+ * 数据脚改成 PWM 输出显然不行。所以这里只借 HAL 打开 PWM 总线时钟，
+ * 通道 2 的寄存器自己配，PG13 也只 mux 一次。
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.  The
+ * ASF licenses this file to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance with the
+ * License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ *
+ ****************************************************************************/
+
+#include <nuttx/config.h>
+
+#include <stdint.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <syslog.h>
+
+#include <hal_gpio.h>
+#include <sunxi_hal_pwm.h>
+
+#include "led_strip.h"
+
+/****************************************************************************
+ * Pre-processor Definitions
+ ****************************************************************************/
+
+/* PG13 的功能表（从原理图 SOC 页读出）：
+ *   PG13/I2S1_BCLK/TWI0_SDA/RGMII_CLKIN/RMII_RXER/PWM2/LEDC_DO/UART1_RX
+ * HAL 的 mux 编号是「GPIO 输入=0、输出=1、第一个复用=2」，所以 PWM2 是 6。
+ */
+
+#define STRIP_PIN            GPIOG(13)
+#define STRIP_PWM_MUX        GPIO_MUXSEL_FUNCTION6
+#define STRIP_PWM_CH         2
+
+/* sun8iw20 PWM 控制器：通道 2 的寄存器。 */
+
+#define STRIP_PWM_BASE       0x02000c00UL
+#define PWM_REG(off)         (*(volatile uint32_t *)(STRIP_PWM_BASE + (off)))
+#define LED_PWM_PCCR23           0x24
+#define LED_PWM_PCGR             0x40
+#define LED_PWM_PER              0x80
+#define LED_PWM_PCR(n)           (0x0100 + 0x20 * (n))
+#define LED_PWM_PPR(n)           (0x0104 + 0x20 * (n))
+
+#define PWM_CLK_SRC_OSC24M   0              /* PCCR 的 clk_src = 0 */
+#define PWM_CLK_DIV_M_1      0              /* div_m = 0 → 分频 1 */
+#define PWM_PCR_ACTIVE_HIGH  (1u << 8)      /* PWM_POLARITY_NORMAL */
+
+/* 2 kHz、24 MHz 源时钟 → 12000 个周期，不需要预分频。 */
+
+#define STRIP_PWM_HZ         2000
+#define STRIP_PERIOD_CYCLES  (24000000 / STRIP_PWM_HZ)
+
+/* 呼吸：4 秒一轮，每 31 ms 走一档（128 档）。最高只开到 60%，灯带
+ * 贴在设备上不需要全亮，也从源头上压住 5V 取电的电流。想更亮改这里。 */
+
+#define STRIP_BREATH_MS      4000
+#define STRIP_STEPS          128
+#define STRIP_STEP_US        (STRIP_BREATH_MS * 1000 / STRIP_STEPS)
+#define STRIP_MAX_PCT        60
+
+/****************************************************************************
+ * Private Data
+ ****************************************************************************/
+
+/* 128 点、gamma 2.2 校正后的呼吸曲线，0~1000。
+ * 直接把正弦当占空比的话，低亮度段变化太快、看着像在闪；按
+ * duty = perceived^2.2 校正后才是均匀的「呼吸」。 */
+
+static const uint16_t g_breath[STRIP_STEPS] =
+{
+     0,    0,    0,    0,    0,    0,    0,    0,    1,    1,    2,    3,
+     4,    6,    8,   11,   15,   19,   24,   30,   37,   44,   54,   64,
+    75,   88,  102,  118,  135,  154,  173,  195,  218,  242,  267,  294,
+   322,  351,  381,  412,  444,  476,  509,  542,  575,  608,  641,  674,
+   706,  737,  767,  796,  824,  850,  875,  897,  918,  937,  953,  967,
+   979,  988,  995,  999, 1000,  999,  995,  988,  979,  967,  953,  937,
+   918,  897,  875,  850,  824,  796,  767,  737,  706,  674,  641,  608,
+   575,  542,  509,  476,  444,  412,  381,  351,  322,  294,  267,  242,
+   218,  195,  173,  154,  135,  118,  102,   88,   75,   64,   54,   44,
+    37,   30,   24,   19,   15,   11,    8,    6,    4,    3,    2,    1,
+     1,    0,    0,    0,    0,    0,    0,    0,
+};
+
+static volatile int g_strip_run;
+static pthread_t    g_strip_thread;
+static int          g_strip_started;
+
+/****************************************************************************
+ * Private Functions
+ ****************************************************************************/
+
+/* 只写通道 2 的 active-cycles 字段，period 字段保持不动。 */
+
+void led_strip_set_pct(int pct)
+{
+  uint32_t active;
+  uint32_t reg;
+
+  if (pct < 0)
+    {
+      pct = 0;
+    }
+  else if (pct > 100)
+    {
+      pct = 100;
+    }
+
+  active = (uint32_t)STRIP_PERIOD_CYCLES * (uint32_t)pct / 100u;
+
+  reg  = PWM_REG(LED_PWM_PPR(STRIP_PWM_CH));
+  reg &= 0xffff0000u;                       /* 清掉 [15:0] active cycles */
+  reg |= active & 0xffffu;
+  PWM_REG(LED_PWM_PPR(STRIP_PWM_CH)) = reg;
+}
+
+static void strip_pwm_init(void)
+{
+  uint32_t reg;
+
+  /* 只借它打开 PWM 总线时钟。显示背光在 LCD 初始化时已经调用过一次，
+   * 这里是引用计数 +1，不会重置控制器。 */
+
+  hal_pwm_init();
+
+  /* 通道 2：24 MHz 源、不分频。 */
+
+  reg  = PWM_REG(LED_PWM_PCCR23);
+  reg &= ~((0x3u << 7) | 0xfu);             /* clk_src = OSC24M, div_m = 0 */
+  PWM_REG(LED_PWM_PCCR23) = reg;
+
+  /* 打开通道 2 的时钟门控。 */
+
+  PWM_REG(LED_PWM_PCGR) |= (1u << STRIP_PWM_CH);
+
+  /* 预分频 0，正常极性（占空比期间输出高）。 */
+
+  PWM_REG(LED_PWM_PCR(STRIP_PWM_CH)) = PWM_PCR_ACTIVE_HIGH;
+
+  /* 周期和初始占空比（0，灯带先灭）。 */
+
+  PWM_REG(LED_PWM_PPR(STRIP_PWM_CH)) =
+      ((STRIP_PERIOD_CYCLES - 1) << 16);
+
+  /* 使能通道 2。 */
+
+  PWM_REG(LED_PWM_PER) |= (1u << STRIP_PWM_CH);
+}
+
+static void *strip_worker(void *arg)
+{
+  unsigned int i = 0;
+
+  (void)arg;
+
+  while (g_strip_run)
+    {
+      int pct = ((int)g_breath[i] * STRIP_MAX_PCT + 500) / 1000;
+
+      led_strip_set_pct(pct);
+      usleep(STRIP_STEP_US);
+
+      i = (i + 1) & (STRIP_STEPS - 1);
+    }
+
+  return NULL;
+}
+
+/****************************************************************************
+ * Public Functions
+ ****************************************************************************/
+
+int led_strip_start(void)
+{
+  pthread_attr_t attr;
+  int ret;
+
+  if (g_strip_started)
+    {
+      return 0;
+    }
+
+  ret = hal_gpio_pinmux_set_function(STRIP_PIN, STRIP_PWM_MUX);
+  if (ret != 0)
+    {
+      syslog(LOG_ERR, "[led_strip] PG13 mux to PWM2 failed: %d\n", ret);
+      return -1;
+    }
+
+  /* 下拉：PWM 还没启动的这段时间（以及将来复位时）栅极必须是低电平，
+   * 否则 MOS 管会被 BT PCM 那一路的残留电平打开。外部 10k 下拉是主
+   * 保障，这里是顺手加一层。 */
+
+  hal_gpio_set_pull(STRIP_PIN, GPIO_PULL_DOWN);
+
+  strip_pwm_init();
+  led_strip_set_pct(0);
+
+  g_strip_run = 1;
+
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 4096);
+
+  ret = pthread_create(&g_strip_thread, &attr, strip_worker, NULL);
+  pthread_attr_destroy(&attr);
+
+  if (ret != 0)
+    {
+      g_strip_run = 0;
+      syslog(LOG_ERR, "[led_strip] worker create failed: %d\n", ret);
+      return -1;
+    }
+
+  g_strip_started = 1;
+  syslog(LOG_INFO, "[led_strip] breathing on PG13/PWM2, %d Hz, max %d%%\n",
+         STRIP_PWM_HZ, STRIP_MAX_PCT);
+  return 0;
+}
+
+void led_strip_stop(void)
+{
+  if (!g_strip_started)
+    {
+      return;
+    }
+
+  g_strip_run = 0;
+  usleep(STRIP_STEP_US * 2);
+  led_strip_set_pct(0);
+  PWM_REG(LED_PWM_PER) &= ~(1u << STRIP_PWM_CH);
+
+  g_strip_started = 0;
+}
