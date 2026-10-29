@@ -59,7 +59,7 @@ a { color: #1a6fb5; text-decoration: none; }
 </tr>
 <tr>
 <td>应用版本</td>
-<td>v2.67</td>
+<td>v2.70</td>
 </tr>
 </tbody>
 </table>
@@ -88,6 +88,9 @@ a { color: #1a6fb5; text-decoration: none; }
 不用再喊一遍唤醒词。小孩说不出「请重复上一句」这种话，这个窗口是替他们省事的。</p>
 <p>另外，家长交代的提醒到点播报之后，孩子回一句「知道了」「好」「做完了」，会通过 MQTT
 推一条回执到家长端——不是监控，是让家长知道交代的事确实传到了。</p>
+<p><strong>孩子玩过的冒险也留得下来。</strong> 家长在手机上点一下「同步」，孩子在故事里做过哪些选择、
+听的是什么情节，就整段取到手机里存着，按时间分成一段段冒险。<strong>这份档案存在家长手机本地</strong>，
+板子重启、刷新都不影响——孩子讲过的故事，家长翻得到。</p>
 <h3>功能清单</h3>
 <table>
 <thead>
@@ -149,6 +152,11 @@ a { color: #1a6fb5; text-decoration: none; }
 <td>通过 MQTT 推一条回执到家长端网页，让家长知道交代的事传到了。只认短答句，孩子要是接着说「知道了，但我不想喝」，那句话会照常走正常问答</td>
 </tr>
 <tr>
+<td><strong>孩子的冒险记录</strong></td>
+<td>家长端点「同步」（连上后也会自动同步一次）</td>
+<td>把孩子角色扮演会话的文本记录取到手机上，按时间切成一段段冒险展示——孩子说的每句话标蓝「孩子：」，故事正文缩进灰字。<strong>长期档案存在手机本地</strong>（板子只留最近 20 条并滚动截断，每次同步往手机上合并去重），所以孩子玩过的故事不会因为板子刷新而消失</td>
+</tr>
+<tr>
 <td>全屏脸谱界面</td>
 <td>自动</td>
 <td>纯 LVGL 图元画的六张表情脸 + 六种道具，把二十来个设备状态翻译成表情，屏上一个字都没有</td>
@@ -173,13 +181,13 @@ a { color: #1a6fb5; text-decoration: none; }
 <hr />
 <h2>二、怎么跑起来</h2>
 <h3>方式一：直接烧预编译固件（推荐）</h3>
-<pre><code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.67.img
+<pre><code>image/kid_buddy_gemini-s1_uart0_128Mnand_v2.70.img
 </code></pre>
 <p>用全志 PhoenixSuit / LiveSuit 按常规流程烧进 NAND。上电后启动脚本会自动拉起图形界面
 和语音后台，不需要再编任何东西。</p>
 <p>确认镜像生效：开机时串口（uart0，115200 8N1）会打出当前应用版本号和实际屏幕分辨率：</p>
-<pre><code>[kid_buddy] GUI v2.67 display 320x240
-[kid_buddy] face UI v2.67 on 320x240 (face band 162, panel 6,166 278x69, 33 cols)
+<pre><code>[kid_buddy] GUI v2.70 display 320x240
+[kid_buddy] face UI v2.70 on 320x240 (face band 162, panel 6,166 278x69, 33 cols)
 </code></pre>
 <p>屏幕本身不再显示版本号——右上角那个位置现在是书签带，整屏只有一张脸和底部三行字幕。</p>
 <h3>方式二：从源码编</h3>
@@ -198,15 +206,25 @@ repo sync -c -j8
   -f r528s3/gemini-s1_nand -g r528s3/gemini-s1_nand
 </code></pre>
 <blockquote>
-<p><strong>注意</strong>：改过 <code>packages/ai_agent</code> 的头文件之后，必须
-<code>make -C nuttx distclean</code> 再编。这套构建不跟踪头文件依赖，留着旧的目标文件会出现
-结构体大小对不上的问题。<code>make clean</code> 不够——它不清 <code>registry/</code> 和 <code>builtin_list.c</code>。</p>
+<p><strong>注意：这套构建不跟踪头文件依赖。</strong> 改过 <code>packages/ai_agent</code> 的头文件之后，相关的
+目标文件不会自动重编，留着旧的会出现结构体大小对不上的问题（症状是读出 240 这样的
+垃圾值，而不是编译报错——很难往这上面想）。</p>
+<p>正确做法是<strong>把那个模块的目标文件删掉再编</strong>：</p>
+<p><code>bash
+find packages/ai_agent -name '*.o' -delete
+make -C nuttx -j2</code></p>
+<p><strong>不要用 <code>make -C nuttx distclean</code>。</strong> 它会重下第三方源码（<code>quickjs</code> 的补丁在重下
+之后对不上，直接断编译），还可能清掉 vendor 侧的 <code>.built</code> 标记，导致归档里缺对象、
+链接时报一批 <code>*_main</code> 未定义。<code>make clean</code> 又清不到位。删 <code>.o</code> 是这里最小的、
+精确的做法。</p>
+<p>另外<strong>不要删 <code>apps/libapps.a</code></strong> —— 删了会遇到同样的问题：一批 <code>*_main</code> 未定义，
+看起来像 registry 脏了，其实是归档缺件。</p>
 </blockquote>
 <hr />
 <h2>三、技术方案</h2>
 <h3>3.1 整体结构</h3>
 <pre><code>        ┌──────────────────────────────────────────┐
-        │  kid_buddy（本作品主体，4200+ 行 C）      │
+        │  kid_buddy（本作品主体，4500+ 行 C）      │
         │  LVGL 界面 · 角色状态机 · 剧情会话管理    │
         └───────────────┬──────────────────────────┘
                         │
@@ -509,13 +527,19 @@ repo sync -c -j8
    打印原始转写，遇到没覆盖的写法加一条即可。</li>
 <li><strong>上游 PR 尚未合入。</strong> 作品对 <code>packages_ai_agent</code> 和 <code>vendor_allwinnertech</code> 的改动
    已按规则提了 PR，但组委会的评审有 CODEOWNERS 闸门，参赛者无法自行合并。<strong>这不影响
-   交付</strong>：改动过的 42 个文件的成品放在本仓 <code>upstream/</code> 下，manifest 在 <code>repo sync</code>
+   交付</strong>：改动过的 43 个文件的成品放在本仓 <code>upstream/</code> 下，manifest 在 <code>repo sync</code>
    时覆盖回工作区，所以「直接烧 <code>image/</code> 里的固件」和「从源码编」两条路都完整可用。</li>
 <li><strong>预编译固件的验证程度较低。</strong> 这条单独放在下面 6.1 说清楚。</li>
 <li>服务端（LLM / ASR / TTS / MQTT broker）需要自行搭建，作品本身不含服务端。</li>
 </ol>
 <h3>6.1 交付镜像的验证程度</h3>
-<p><strong>上板验证过的</strong>：<strong>v2.67</strong>（交付的那一份，2026-09-19 逐条跑完）。脸谱界面——脸、
+<p><strong>上板验证过的</strong>：<strong>v2.67</strong>（2026-09-19 逐条跑完）。决赛版 <strong>v2.70</strong> 在它之上增加了四项
+现场可靠性改动——开机连多个候选网络（手机热点兜底）、开机自检写字幕板、MQTT 出站看门狗、
+输出侧内容安全过滤（详见技术报告 3.4.6）——以及一项新功能：<strong>孩子的冒险记录</strong>
+（家长端把孩子的角色扮演文本历史取到手机本地长期保存，见技术报告 3.2.3 第 7 项）。
+这些改动都以「不改动主链路」为设计约束，各自的验证方法逐项列在仓内
+<code>docs/上板验证清单.md</code>，随决赛演示一并复验。</p>
+<p>v2.67 当时跑过的：脸谱界面——脸、
 字幕板、书签带、六个表情、全部道具、触摸、以及两条失败路径（这一轮请求失败 → 「难过 +
 中文安抚语」；断网待机 → 「困倦 + 泡泡」）——连同这一版新增的<strong>字幕滚动</strong>（正文标签允许长到 8 行，前面开一个两行高的窗口，
 每 2.5 秒上行一行、到底回到开头）一起在真机上点亮并逐条跑过，同批的回归项
@@ -526,16 +550,20 @@ MQTT + 角色扮演回路是 2026-09-09 上板验证通过的。</p>
 <p><strong>还留着一个没大规模校准的地方</strong>：唤醒词的匹配写法只做过离线单测，没有对着真实 ASR
 输出成规模地校准过——喊不醒的时候，日志里 <code>wake: heard "..."</code> 会打出原始转写，照着
 往里加一条音译即可。</p>
-<p><strong>镜像的构造校验</strong>（结果是确定的，作为交叉验证）：版本号字符串在镜像里只出现一次且为
-<code>v2.67</code>；<code>date -s</code> 一次都不出现（时钟自愈已挪进应用，见第四节）；唤醒词
+<p><strong>镜像的构造校验</strong>（在 <strong>v2.70</strong> 交付镜像上实测，结果是确定的，作为交叉验证）：
+版本号字符串在镜像里<strong>只出现一次</strong>且为 <code>v2.70</code>（<code>v2.67</code> / <code>v2.68</code> / <code>v2.69</code> 均为 0 次）；
+<code>date -s</code> 一次都不出现（时钟自愈已挪进应用，见第四节）；唤醒词
 「你好openvela / 欧本维拉」都在，且唤醒别名表里没有旧唤醒词；内建程序名 <code>kid_buddy</code>、
-以及脸谱开机日志格式串（<code>face UI %s on %dx%d</code>）都能在二进制里查到；<code>.sha256</code>
-与镜像一致。</p>
-<p>真要有问题，v2.60 ~ v2.66 七份历史镜像在我们本地留着（每份 27 MB，没有进仓），
-可以直接烧回去。</p>
+两条开机日志格式串（<code>GUI %s display %dx%d</code> 与 <code>face UI %s on %dx%d</code>）、
+决赛版新加的自检格式串（<code>selfcheck: net=%d clock=%d</code>）、WiFi 候选目录名
+（<code>networks.d</code>）、MQTT 看门狗标记（<code>WATCHDOG</code>）、以及冒险记录的协议标记
+（<code>story_log</code>）都能在二进制里查到；<code>.sha256</code> 与镜像一致。</p>
+<p>真要有问题，v2.60 ~ v2.69 十份历史镜像在我们本地留着（每份 27 MB，没有进仓），
+可以直接烧回去。其中 <code>v2.68</code>（只含前两项改动）是内容安全过滤的<strong>回退点</strong>——
+万一过滤出现误杀，烧回它即可去掉这一层。</p>
 <hr />
 <h2>七、目录说明</h2>
-<pre><code>app/kid_buddy/          作品主体：4200+ 行 C + 5 份角色人设设计稿
+<pre><code>app/kid_buddy/          作品主体：4500+ 行 C + 5 份角色人设设计稿
 board/nsh_minidisplay/  板级配置（defconfig + Make.defs），自带即可编译
 image/                  预编译整机固件 + SHA256
 logs/                   AI Coding 对话日志（2026-07-25 ~ 09-20）

@@ -161,9 +161,296 @@ static void build_tools_json_locked(void)
 
 void tool_registry_rebuild_json(void) { build_tools_json_locked(); }
 
+/* ── remember：板子记住孩子说过的事（决赛加） ────────────────────
+ *
+ * 工具表里多一条 remember。孩子在聊天里说到关于自己的事 —— 最喜欢什么、
+ * 养了什么宠物、生日、怕什么、在期待什么 —— 模型调一次这个工具，
+ * 那句话就存下来了；kid_buddy 每轮把最近几条注入提示词，下次提起时它接得上。
+ *
+ * **为什么由模型决定记什么**：写死在应用里的关键词表只能覆盖提前想到的说法，
+ * 而「哪句值得记」本来就是语义判断。这也和这个作品一贯的做法一致 ——
+ * 判断在模型、执行在板子。
+ *
+ * 存储就是一个纯文本文件，一行一条，FIFO 封顶。kid_buddy 那边读它。
+ * 实现放在这里而不是新开一个文件，是为了不动 CMakeLists 的源文件列表。
+ */
+
+#define KID_LINE         96     /* 单条上限（字节），remember / remember_world 共用 */
+#define KID_FACTS_PATH   AGENT_DATA_DIR "/kid_buddy_facts.txt"
+#define KID_FACTS_MAX    32     /* 存放上限，超了丢最旧的 */
+
+/* 星芽岛的世界状态（v2.85）。剧情里一旦发生不可逆的改变 —— 打开宝箱、
+ * 拿走东西、救下谁、和居民立下约定 —— 模型调 remember_world 写一行。
+ * kid_buddy 在故事模式下每轮读出来注入提示词，所以下一次、甚至重启之后
+ * 它仍然知道“那个宝箱已经开过了”。
+ *
+ * 和 remember 分两个文件：孩子的事是长期档案，世界状态是剧情存档，
+ * 生命周期和注入位置都不一样。 */
+#define KID_WORLD_PATH   AGENT_DATA_DIR "/kid_buddy_world.txt"
+#define KID_WORLD_MAX    24     /* 存放上限，超了丢最旧的 */
+
+static int kid_lines_read(const char *path, char (*lines)[KID_LINE], int max)
+{
+    FILE *f = fopen(path, "r");
+    int   n = 0;
+
+    if (f == NULL) {
+        return 0;
+    }
+
+    while (n < max && fgets(lines[n], KID_LINE, f) != NULL) {
+        size_t l = strlen(lines[n]);
+
+        while (l > 0 && (lines[n][l - 1] == '\n' || lines[n][l - 1] == '\r')) {
+            lines[n][--l] = '\0';
+        }
+
+        if (l > 0) {
+            n++;
+        }
+    }
+
+    fclose(f);
+    return n;
+}
+
+static int kid_lines_write(const char *path, char (*lines)[KID_LINE], int n)
+{
+    FILE *f = fopen(path, "w");
+    int   i;
+
+    if (f == NULL) {
+        return ERROR;
+    }
+
+    for (i = 0; i < n; i++) {
+        fprintf(f, "%s\n", lines[i]);
+    }
+
+    fclose(f);
+    return OK;
+}
+
+/* 把模型给的一句话压成文件里的一行：换行/制表符换成空格、去尾空格、
+ * 截到 KID_LINE-1 字节。截断可能正好落在 UTF-8 序列中间，这时退回到
+ * 最后一个完整字符 —— 半个汉字喂给模型比少几个字难查得多。 */
+static void kid_line_clean(const char *src, char *clean, size_t *out_len)
+{
+    size_t n = 0;
+    size_t i;
+
+    for (i = 0; src[i] != '\0' && n < KID_LINE - 1; i++) {
+        char c = src[i];
+        clean[n++] = (c == '\n' || c == '\r' || c == '\t') ? ' ' : c;
+    }
+
+    if (src[i] != '\0') {
+        size_t cut = n;
+
+        while (cut > 0 && ((unsigned char)clean[cut - 1] & 0xC0) == 0x80) {
+            cut--;
+        }
+
+        if (cut > 0) {
+            unsigned char lead = (unsigned char)clean[cut - 1];
+            size_t need = 1;
+
+            if ((lead & 0xE0) == 0xC0) {
+                need = 2;
+            } else if ((lead & 0xF0) == 0xE0) {
+                need = 3;
+            } else if ((lead & 0xF8) == 0xF0) {
+                need = 4;
+            }
+
+            if (cut - 1 + need > n) {
+                n = cut - 1;
+            }
+        }
+    }
+
+    while (n > 0 && clean[n - 1] == ' ') {
+        n--;
+    }
+
+    clean[n] = '\0';
+    *out_len = n;
+}
+
+int tool_remember_execute(const char *input_json, char *output,
+                          size_t output_size)
+{
+    /* 只跑在 Agent 主循环这一个线程上，静态缓冲是安全的 ——
+     * 换来的是不用在栈上放 3KB。 */
+    static char s_lines[KID_FACTS_MAX][KID_LINE];
+
+    cJSON      *root;
+    const char *fact;
+    char        clean[KID_LINE];
+    size_t      n = 0;
+    size_t      i;
+    int         count;
+
+    root = cJSON_Parse(input_json);
+
+    if (root == NULL) {
+        snprintf(output, output_size, "{\"error\":\"bad json\"}");
+        return ERROR;
+    }
+
+    fact = cJSON_GetStringValue(cJSON_GetObjectItem(root, "fact"));
+    cJSON_Delete(root);
+
+    if (fact == NULL || fact[0] == '\0') {
+        snprintf(output, output_size, "{\"error\":\"fact is empty\"}");
+        return ERROR;
+    }
+
+    /* 一条事实必须压成一行：换行会把文件格式撑破 */
+    kid_line_clean(fact, clean, &n);
+
+    if (n == 0) {
+        snprintf(output, output_size, "{\"error\":\"fact is empty\"}");
+        return ERROR;
+    }
+
+    count = kid_lines_read(KID_FACTS_PATH, s_lines, KID_FACTS_MAX);
+
+    /* 记过同一条就不重复 */
+    for (i = 0; i < (size_t)count; i++) {
+        if (strcmp(s_lines[i], clean) == 0) {
+            snprintf(output, output_size,
+                     "{\"ok\":true,\"note\":\"already known\",\"total\":%d}",
+                     count);
+            return OK;
+        }
+    }
+
+    /* 满了丢最旧的一条 */
+    if (count >= KID_FACTS_MAX) {
+        memmove(s_lines[0], s_lines[1],
+                (size_t)(KID_FACTS_MAX - 1) * KID_LINE);
+        count = KID_FACTS_MAX - 1;
+    }
+
+    strncpy(s_lines[count], clean, KID_LINE - 1);
+    s_lines[count][KID_LINE - 1] = '\0';
+    count++;
+
+    if (kid_lines_write(KID_FACTS_PATH, s_lines, count) != OK) {
+        snprintf(output, output_size, "{\"error\":\"write failed\"}");
+        return ERROR;
+    }
+
+    syslog(LOG_INFO, "[%s] remember: %s（共 %d 条）\n", "tool", clean, count);
+
+    snprintf(output, output_size, "{\"ok\":true,\"total\":%d}", count);
+    return OK;
+}
+
+/* ── remember_world：记住故事世界里已经发生的改变（v2.85） ────────
+ *
+ * 和 remember 分开：孩子自己的喜好是长期档案，剧情里的“宝箱已经开过”
+ * 是另一条时间线。写进 kid_buddy_world.txt，kid_buddy 只在故事模式下
+ * 注入，不污染普通聊天。
+ */
+int tool_remember_world_execute(const char *input_json, char *output,
+                                size_t output_size)
+{
+    static char s_lines[KID_WORLD_MAX][KID_LINE];
+
+    cJSON      *root;
+    const char *change;
+    char        clean[KID_LINE];
+    size_t      n = 0;
+    size_t      i;
+    int         count;
+
+    root = cJSON_Parse(input_json);
+
+    if (root == NULL) {
+        snprintf(output, output_size, "{\"error\":\"bad json\"}");
+        return ERROR;
+    }
+
+    change = cJSON_GetStringValue(cJSON_GetObjectItem(root, "change"));
+    cJSON_Delete(root);
+
+    if (change == NULL || change[0] == '\0') {
+        snprintf(output, output_size, "{\"error\":\"change is empty\"}");
+        return ERROR;
+    }
+
+    kid_line_clean(change, clean, &n);
+
+    if (n == 0) {
+        snprintf(output, output_size, "{\"error\":\"change is empty\"}");
+        return ERROR;
+    }
+
+    count = kid_lines_read(KID_WORLD_PATH, s_lines, KID_WORLD_MAX);
+
+    for (i = 0; i < (size_t)count; i++) {
+        if (strcmp(s_lines[i], clean) == 0) {
+            snprintf(output, output_size,
+                     "{\"ok\":true,\"note\":\"already recorded\",\"total\":%d}",
+                     count);
+            return OK;
+        }
+    }
+
+    if (count >= KID_WORLD_MAX) {
+        memmove(s_lines[0], s_lines[1],
+                (size_t)(KID_WORLD_MAX - 1) * KID_LINE);
+        count = KID_WORLD_MAX - 1;
+    }
+
+    strncpy(s_lines[count], clean, KID_LINE - 1);
+    s_lines[count][KID_LINE - 1] = '\0';
+    count++;
+
+    if (kid_lines_write(KID_WORLD_PATH, s_lines, count) != OK) {
+        snprintf(output, output_size, "{\"error\":\"write failed\"}");
+        return ERROR;
+    }
+
+    syslog(LOG_INFO, "[%s] remember_world: %s（共 %d 条）\n",
+           "tool", clean, count);
+
+    snprintf(output, output_size, "{\"ok\":true,\"total\":%d}", count);
+    return OK;
+}
+
 int tool_registry_init(void)
 {
+
     s_tool_count = 0;
+
+    /* 记住关于孩子的事（决赛加）。写进 kid_buddy_facts.txt，
+     * kid_buddy 每轮读出来注入提示词。 */
+    REGISTER_TOOL(
+        "remember",
+        "记住一件关于这个小朋友的事。当他说到自己的喜好、家人、宠物、生日、"
+        "害怕的东西、正在期待的事，就调用一次。不要记无关的闲聊，"
+        "也不要记你自己说过的话。一条一句话，用第三人称写。",
+        TOOL_SCHEMA_BEGIN()
+            TOOL_PARAM_STR("fact", "要记住的那件事，一句话")
+            TOOL_SCHEMA_END_REQUIRED("\"fact\""),
+        tool_remember_execute);
+
+    /* 记住故事世界里已经发生、以后不能反悔的改变（v2.85）。
+     * 写进 kid_buddy_world.txt，只在故事模式下注入提示词。 */
+    REGISTER_TOOL(
+        "remember_world",
+        "记录故事世界里已经发生的改变。打开了宝箱、拿走了某件东西、救下了谁、"
+        "和居民立下了约定、某个地点被改变了——这种以后不能反悔、会影响后续剧情的事，"
+        "发生时就调用一次。只记事实，不记对话过程；一件事一条，用第三人称，"
+        "不超过 30 个字。孩子自己的喜好不要记在这里，用 remember。",
+        TOOL_SCHEMA_BEGIN()
+            TOOL_PARAM_STR("change", "发生了什么改变，一句话")
+            TOOL_SCHEMA_END_REQUIRED("\"change\""),
+        tool_remember_world_execute);
+
 
 #ifdef CONFIG_AI_AGENT_MCP
     if (mcp_bridge_init() != OK) {

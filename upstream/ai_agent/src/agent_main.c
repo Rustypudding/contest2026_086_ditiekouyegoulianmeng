@@ -156,6 +156,7 @@ static void net_state_change_cb(net_state_t state, void* arg)
 
 /* Set once the boot clock sync task finishes, successfully or not. */
 static volatile bool s_boot_clock_sync_done = false;
+static volatile bool s_boot_clock_sync_started = false;
 
 /**
  * Sync the system clock from a network time source, once, at boot.
@@ -163,11 +164,25 @@ static volatile bool s_boot_clock_sync_done = false;
  * Runs on its own task because the TLS connect path on this build has no
  * usable timeout — a blackholed time source would otherwise delay every
  * channel behind it.
+ *
+ * Waits for an IP first. WiFi can come up long after boot (association can
+ * exceed the 30 s startup window, and credentials are often set from the
+ * CLI after power-on). Returning early here would leave the clock
+ * unverified for the whole session, which silently breaks absolute-time
+ * reminders — the system prompt and cron_add check this flag.
  */
 static void* boot_clock_sync_task(void* arg)
 {
     (void)arg;
     char out[96];
+
+    while (!network_is_connected()) {
+        if (g_shutdown_requested) {
+            s_boot_clock_sync_done = true;
+            return NULL;
+        }
+        sleep(1);
+    }
 
     if (agent_time_sync_now(out, sizeof(out)) == OK) {
         syslog(LOG_INFO, "[%s] Boot clock sync OK: %s\n", TAG, out);
@@ -180,6 +195,80 @@ static void* boot_clock_sync_task(void* arg)
     return NULL;
 }
 
+/* Start the clock sync task at most once. Safe to call whether or not the
+ * network was up at boot — the task waits for connectivity itself. */
+static void start_boot_clock_sync(void)
+{
+    if (s_boot_clock_sync_started) {
+        return;
+    }
+
+    s_boot_clock_sync_started = true;
+    if (agent_task_create(boot_clock_sync_task, "clk_sync",
+            AGENT_CLOCK_SYNC_STACK, NULL, AGENT_CLOCK_SYNC_PRIO) != OK) {
+        s_boot_clock_sync_started = false;
+        syslog(LOG_WARNING, "[%s] clk_sync task create failed\n", TAG);
+    }
+}
+
+/* Bring up every service that needs an IP. Split out so the late-network
+ * path below starts exactly the same set. */
+static void start_network_services(void)
+{
+#if AGENT_SKILL_SYNC_ENABLED
+    /* Sync skills from Bitable before starting agent loop */
+    if (skill_sync_from_bitable() != OK) {
+        syslog(LOG_WARNING, "[%s] Bitable skill sync failed, using local skills\n", TAG);
+    }
+#endif
+
+#ifdef CONFIG_AI_AGENT_FEISHU
+    if (feishu_bot_start() != OK)
+        syslog(LOG_WARNING, "[%s] feishu_bot_start failed\n", TAG);
+#endif
+    if (agent_loop_start() != OK)
+        syslog(LOG_WARNING, "[%s] agent_loop_start failed\n", TAG);
+    if (ws_server_start() != OK)
+        syslog(LOG_WARNING, "[%s] ws_server_start failed\n", TAG);
+#ifdef CONFIG_AI_AGENT_NODE
+    if (node_client_start() != OK)
+        syslog(LOG_WARNING, "[%s] node_client_start failed\n", TAG);
+#endif
+#ifdef CONFIG_AI_AGENT_MQTT
+    if (mqtt_channel_start() != OK)
+        syslog(LOG_WARNING, "[%s] mqtt_channel_start failed\n", TAG);
+#endif
+#ifdef CONFIG_AI_AGENT_WEIXIN
+    if (weixin_channel_start() != OK)
+        syslog(LOG_WARNING, "[%s] weixin_channel_start failed\n", TAG);
+#endif
+
+    syslog(LOG_INFO, "[%s] All network services started!\n", TAG);
+}
+
+#ifndef CONFIG_AI_AGENT_NET_RPMSG
+/**
+ * WiFi that appears after the startup window — a slow AP, or the operator
+ * just ran set_wifi on the CLI. Wait for the IP, then start the channels;
+ * otherwise MQTT and the agent loop stay off until the next reboot.
+ */
+static void* late_network_start_task(void* arg)
+{
+    (void)arg;
+
+    while (!network_is_connected()) {
+        if (g_shutdown_requested) {
+            return NULL;
+        }
+        sleep(1);
+    }
+
+    syslog(LOG_INFO, "[%s] Network came up late: %s\n", TAG, network_get_ip());
+    start_network_services();
+    return NULL;
+}
+#endif
+
 /**
  * Runs in a background thread: waits for network, then starts all
  * network-dependent services. Main thread is NOT blocked.
@@ -189,7 +278,14 @@ static void* network_watch_task(void* arg)
     (void)arg;
     syslog(LOG_INFO, "[%s] Network watcher started\n", TAG);
 
+    /* Saved credentials first, then the candidate list. This replaces the
+     * old /etc/wifi/start_wifi.sh, which could never run under NSH (no
+     * positional parameters, no VAR=value, no grep). */
+#ifndef CONFIG_AI_AGENT_NET_RPMSG
+    network_wifi_boot_connect();
+#else
     network_wifi_reconnect();
+#endif
 
     if (network_wait_connected(30000) == OK) {
         syslog(LOG_INFO, "[%s] Network connected: %s\n", TAG, network_get_ip());
@@ -203,11 +299,9 @@ static void* network_watch_task(void* arg)
          * Bounded on purpose: if the wait expires we start the channels
          * anyway and the clock merely stays unverified, which the system
          * prompt and cron_add both check for. */
-        if (agent_task_create(boot_clock_sync_task, "clk_sync",
-                AGENT_CLOCK_SYNC_STACK, NULL, AGENT_CLOCK_SYNC_PRIO) == OK) {
-            for (int i = 0; i < 50 && !s_boot_clock_sync_done; i++) {
-                usleep(100 * 1000);
-            }
+        start_boot_clock_sync();
+        for (int i = 0; i < 50 && !s_boot_clock_sync_done; i++) {
+            usleep(100 * 1000);
         }
 
         if (!s_boot_clock_sync_done) {
@@ -216,42 +310,32 @@ static void* network_watch_task(void* arg)
                 "channels anyway, clock UNVERIFIED for now\n", TAG);
         }
 
-#if AGENT_SKILL_SYNC_ENABLED
-        /* Sync skills from Bitable before starting agent loop */
-        if (skill_sync_from_bitable() != OK) {
-            syslog(LOG_WARNING, "[%s] Bitable skill sync failed, using local skills\n", TAG);
-        }
-#endif
-
-#ifdef CONFIG_AI_AGENT_FEISHU
-        if (feishu_bot_start() != OK)
-            syslog(LOG_WARNING, "[%s] feishu_bot_start failed\n", TAG);
-#endif
-        if (agent_loop_start() != OK)
-            syslog(LOG_WARNING, "[%s] agent_loop_start failed\n", TAG);
-        if (ws_server_start() != OK)
-            syslog(LOG_WARNING, "[%s] ws_server_start failed\n", TAG);
-#ifdef CONFIG_AI_AGENT_NODE
-        if (node_client_start() != OK)
-            syslog(LOG_WARNING, "[%s] node_client_start failed\n", TAG);
-#endif
-#ifdef CONFIG_AI_AGENT_MQTT
-        if (mqtt_channel_start() != OK)
-            syslog(LOG_WARNING, "[%s] mqtt_channel_start failed\n", TAG);
-#endif
-#ifdef CONFIG_AI_AGENT_WEIXIN
-        if (weixin_channel_start() != OK)
-            syslog(LOG_WARNING, "[%s] weixin_channel_start failed\n", TAG);
-#endif
-
-        syslog(LOG_INFO, "[%s] All network services started!\n", TAG);
+        start_network_services();
 
 #ifdef CONFIG_AI_AGENT_NET_RPMSG
         g_net_services_started = true;
 #endif
     } else {
-        syslog(LOG_WARNING, "[%s] Network timeout — net services not started.\n", TAG);
+        syslog(LOG_WARNING, "[%s] Network timeout — net services not started yet.\n", TAG);
         syslog(LOG_WARNING, "[%s] Use 'config_show' / 'set_*' CLI commands to configure.\n", TAG);
+
+        /* WiFi may still come up later (set_wifi from the CLI, a slow AP).
+         * The clock task waits for an IP itself, so start it now rather than
+         * never — otherwise the boot self-check polls forever and absolute
+         * time reminders stay disabled for the whole session. */
+        start_boot_clock_sync();
+
+#ifndef CONFIG_AI_AGENT_NET_RPMSG
+        /* Same reason for the services: start them whenever the IP shows
+         * up, instead of leaving MQTT and the agent loop off until the
+         * next reboot. */
+        if (agent_task_create(late_network_start_task, "net_late",
+                AGENT_OUTBOUND_STACK, NULL,
+                AGENT_OUTBOUND_PRIO) != OK) {
+            syslog(LOG_WARNING, "[%s] late net start task create failed\n",
+                TAG);
+        }
+#endif
     }
 
 #ifdef CONFIG_AI_AGENT_NET_RPMSG

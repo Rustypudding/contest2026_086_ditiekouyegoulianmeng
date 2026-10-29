@@ -100,6 +100,23 @@ int voice_tts_speak(const char* text,
     return s_active->synthesize(text, pcm_out, pcm_cap, pcm_len);
 }
 
+int voice_tts_set_voice(const char* voice)
+{
+    if (!voice || voice[0] == '\0') {
+        return -EINVAL;
+    }
+
+    if (!s_active) {
+        return -ENODEV;
+    }
+
+    if (!s_active->set_voice) {
+        return -ENOTSUP;
+    }
+
+    return s_active->set_voice(voice);
+}
+
 /* ── Streaming TTS (backend-generic) ─────────────────────────── */
 
 int voice_tts_speak_stream(const char* text,

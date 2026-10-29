@@ -40,7 +40,8 @@
 
 static const char* TAG = "mimo_tts";
 
-/* MiMo preset voice (Chinese, female). */
+/* MiMo preset voice (Chinese, female). The default for normal chat; story
+ * lines override it per sentence via voice_tts_set_voice(). */
 #define MIMO_TTS_VOICE "冰糖"
 
 /* MiMo TTS model and audio format. */
@@ -76,6 +77,21 @@ static const char* TAG = "mimo_tts";
 /* Credentials loaded from config store (shared with the MiMo LLM). */
 static char s_api_key[128];
 static char s_host[128];
+
+/* Preset voice for the next request. Changed per sentence by the caller;
+ * speak calls are serialized, so a plain global is enough. */
+static char s_voice[32] = MIMO_TTS_VOICE;
+
+static int mimo_tts_set_voice(const char* voice)
+{
+    if (!voice || voice[0] == '\0') {
+        return -EINVAL;
+    }
+
+    strncpy(s_voice, voice, sizeof(s_voice) - 1);
+    s_voice[sizeof(s_voice) - 1] = '\0';
+    return 0;
+}
 
 static int mimo_tts_init(void)
 {
@@ -124,7 +140,7 @@ static char* build_tts_request(const char* text)
     }
 
     cJSON_AddStringToObject(audio, "format", MIMO_TTS_FORMAT);
-    cJSON_AddStringToObject(audio, "voice", MIMO_TTS_VOICE);
+    cJSON_AddStringToObject(audio, "voice", s_voice);
     cJSON_AddItemToObject(root, "audio", audio);
 
     char* json_str = cJSON_PrintUnformatted(root);
@@ -388,6 +404,7 @@ static const voice_tts_ops_t s_mimo_tts_ops = {
     .synthesize = mimo_tts_synthesize,
     .synthesize_stream = mimo_tts_synthesize_stream,
     .deinit = NULL,
+    .set_voice = mimo_tts_set_voice,
 };
 
 int mimo_tts_register(void)

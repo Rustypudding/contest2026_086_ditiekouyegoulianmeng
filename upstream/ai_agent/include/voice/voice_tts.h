@@ -55,6 +55,11 @@ typedef struct voice_tts_ops {
 
     /* Release resources held by the backend. */
     void (*deinit)(void);
+
+    /* Optional: pick a preset voice for subsequent synthesis calls.
+     * Returns 0 if the backend accepted it, negative errno otherwise.
+     * Backends without preset voices leave this NULL. */
+    int (*set_voice)(const char *voice);
 } voice_tts_ops_t;
 
 /* Register a TTS backend. Multiple backends can be registered. */
@@ -71,6 +76,11 @@ int voice_tts_speak(const char *text,
                     unsigned char *pcm_out,
                     size_t pcm_cap,
                     size_t *pcm_len);
+
+/* Select a preset voice on the active backend (e.g. "冰糖"). The setting
+ * persists until changed, so callers set it once per utterance. Returns
+ * -ENOTSUP if the active backend has no preset voices. */
+int voice_tts_set_voice(const char *voice);
 
 /* ── Streaming TTS interface ─────────────────────────────────── */
 

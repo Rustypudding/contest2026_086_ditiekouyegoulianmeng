@@ -138,7 +138,7 @@ static void cmd_help(void)
 #endif
         "  restart              - Restart the device\n"
         "  quit                 - Exit agent\n"
-        "  set_mqtt <broker> [client_id] - Set MQTT broker (host:port)\n"
+        "  set_mqtt <broker> [client [in out [user pass]]] - Set MQTT broker\n"
         "  set_volc_key <api_key>       - Set Doubao voice API key\n"
         "  set_volc_asr <id> <tok> <cluster> - Set ASR credentials\n"
         "  set_volc_speaker <id>  - Set TTS voice (e.g. zh_female_cancan)\n"

@@ -21,6 +21,7 @@ include $(APPDIR)/Make.defs
 include $(APPDIR)/vendor/allwinnertech/Common.mk
 
 MAINSRC = kid_buddy.c
+CSRCS = led_strip.c
 
 PROGNAME = $(CONFIG_KID_BUDDY_APP_PROGNAME)
 PRIORITY = $(CONFIG_KID_BUDDY_APP_PRIORITY)
