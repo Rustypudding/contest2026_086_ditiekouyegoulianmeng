@@ -28,14 +28,24 @@ extern "C"
 {
 #endif
 
-/* 启动呼吸灯带：把 PG13 复用到 PWM2，配置 2 kHz，然后起一个线程做
- * 4 秒一轮的呼吸。重复调用是安全的（第二次直接返回）。
+/* 灯带的「活动」位：只要有任何一位被置上，灯带就做 4 秒一轮的呼吸；
+ * 全部清掉之后回到常亮。多个线程可以各自置自己那一位，互不覆盖。 */
+
+#define LED_STRIP_ACT_THINKING  (1u << 0)  /* 等模型回复（LLM 轮次） */
+#define LED_STRIP_ACT_BOOK      (1u << 1)  /* 给家长回传故事记录 */
+
+/* 启动灯带：把 PG13 复用到 PWM2，配置 2 kHz，先给一个常亮亮度，然后
+ * 起线程按活动位在「呼吸 / 常亮」之间切换。重复调用是安全的。
  * 返回 0 成功，负值失败（失败时灯带保持熄灭，不影响主功能）。 */
 
 int led_strip_start(void);
 
-/* 手动设置亮度，0~100（%）。呼吸线程会一直覆盖这个值，调试时可以先
- * 调用 led_strip_stop()。 */
+/* 置上 / 清掉一个活动位（LED_STRIP_ACT_*）。on 非 0 表示置位。 */
+
+void led_strip_set_activity(unsigned int activity, int on);
+
+/* 手动设置亮度，0~100（%）。呼吸线程运行时会在每个周期覆盖这个值，
+ * 调试时可以先调用 led_strip_stop()。 */
 
 void led_strip_set_pct(int pct);
 

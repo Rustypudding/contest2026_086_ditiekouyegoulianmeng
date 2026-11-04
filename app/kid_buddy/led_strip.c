@@ -7,8 +7,8 @@
  *   H4 第 1 脚 (PG13, BT_PCM_DOUT) --100R--> MOS 管栅极，栅极再用 10k 下拉；
  *   MOS 管源极接 GND，漏极接灯带负极，灯带正极接 5V（H6 第 7 脚）或外部电源。
  *
- * 软件：PG13 复用成 PWM2（功能 6），2 kHz，占空比由线程按 4 秒周期
- * 做 gamma 校正的呼吸。
+ * 软件：PG13 复用成 PWM2（功能 6），2 kHz。平时常亮；有「活动」时
+ * （等模型回复、给家长回传故事记录）按 4 秒周期做 gamma 校正的呼吸。
  *
  * 为什么不用 /dev/pwmN：NuttX 的 PWM lower-half 在每次 set-duty 时都会走
  * hal_pwm_control()，而后者每次都会调 hal_pwm_pinctrl_init()，sys_config
@@ -36,6 +36,7 @@
 #include <nuttx/config.h>
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <syslog.h>
@@ -85,6 +86,11 @@
 #define STRIP_STEP_US        (STRIP_BREATH_MS * 1000 / STRIP_STEPS)
 #define STRIP_MAX_PCT        60
 
+/* 没有活动时的常亮亮度。比呼吸的峰值低，夜里不至于刺眼。 */
+
+#define STRIP_STEADY_PCT     40
+#define STRIP_IDLE_POLL_US   (100 * 1000)  /* 常亮时 10 Hz 看一眼活动位 */
+
 /****************************************************************************
  * Private Data
  ****************************************************************************/
@@ -112,6 +118,12 @@ static volatile int g_strip_run;
 static pthread_t    g_strip_thread;
 static int          g_strip_started;
 
+/* 活动位由不同线程置/清（GUI 线程等模型，MQTT sync 线程发故事记录），
+ * 所以用一个锁保护；worker 每 31 ms 读一次，开销可以忽略。 */
+
+static pthread_mutex_t g_strip_activity_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned int    g_strip_activity;
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
@@ -138,6 +150,33 @@ void led_strip_set_pct(int pct)
   reg &= 0xffff0000u;                       /* 清掉 [15:0] active cycles */
   reg |= active & 0xffffu;
   PWM_REG(LED_PWM_PPR(STRIP_PWM_CH)) = reg;
+}
+
+void led_strip_set_activity(unsigned int activity, int on)
+{
+  pthread_mutex_lock(&g_strip_activity_lock);
+
+  if (on)
+    {
+      g_strip_activity |= activity;
+    }
+  else
+    {
+      g_strip_activity &= ~activity;
+    }
+
+  pthread_mutex_unlock(&g_strip_activity_lock);
+}
+
+static bool strip_activity_any(void)
+{
+  bool any;
+
+  pthread_mutex_lock(&g_strip_activity_lock);
+  any = (g_strip_activity != 0);
+  pthread_mutex_unlock(&g_strip_activity_lock);
+
+  return any;
 }
 
 static void strip_pwm_init(void)
@@ -176,17 +215,43 @@ static void strip_pwm_init(void)
 static void *strip_worker(void *arg)
 {
   unsigned int i = 0;
+  bool breathing = false;
 
   (void)arg;
 
   while (g_strip_run)
     {
-      int pct = ((int)g_breath[i] * STRIP_MAX_PCT + 500) / 1000;
+      if (strip_activity_any())
+        {
+          int pct;
 
-      led_strip_set_pct(pct);
-      usleep(STRIP_STEP_US);
+          /* 从最暗一档重新起呼，不要在上一轮的位置上接着走；活动断断续续
+           * 时也总是先暗后亮，看起来才像一次完整的呼吸。 */
+          if (!breathing)
+            {
+              i = 0;
+            }
 
-      i = (i + 1) & (STRIP_STEPS - 1);
+          pct = ((int)g_breath[i] * STRIP_MAX_PCT + 500) / 1000;
+          led_strip_set_pct(pct);
+
+          i = (i + 1) & (STRIP_STEPS - 1);
+          breathing = true;
+
+          usleep(STRIP_STEP_US);
+        }
+      else
+        {
+          /* 活动全清：回到常亮。只在「刚停下」那一次写寄存器，之后每
+           * 100 ms 轮询一次即可，不占 PWM。 */
+          if (breathing)
+            {
+              led_strip_set_pct(STRIP_STEADY_PCT);
+              breathing = false;
+            }
+
+          usleep(STRIP_IDLE_POLL_US);
+        }
     }
 
   return NULL;
@@ -220,7 +285,9 @@ int led_strip_start(void)
   hal_gpio_set_pull(STRIP_PIN, GPIO_PULL_DOWN);
 
   strip_pwm_init();
-  led_strip_set_pct(0);
+
+  /* 平时就是常亮；有活动位时 worker 会接管做呼吸。 */
+  led_strip_set_pct(STRIP_STEADY_PCT);
 
   g_strip_run = 1;
 
@@ -233,13 +300,17 @@ int led_strip_start(void)
   if (ret != 0)
     {
       g_strip_run = 0;
+      led_strip_set_pct(0);
+      PWM_REG(LED_PWM_PER) &= ~(1u << STRIP_PWM_CH);
       syslog(LOG_ERR, "[led_strip] worker create failed: %d\n", ret);
       return -1;
     }
 
   g_strip_started = 1;
-  syslog(LOG_INFO, "[led_strip] breathing on PG13/PWM2, %d Hz, max %d%%\n",
-         STRIP_PWM_HZ, STRIP_MAX_PCT);
+  syslog(LOG_INFO,
+         "[led_strip] PG13/PWM2 %d Hz, steady %d%%, breathe on activity "
+         "(max %d%%)\n",
+         STRIP_PWM_HZ, STRIP_STEADY_PCT, STRIP_MAX_PCT);
   return 0;
 }
 
@@ -251,9 +322,14 @@ void led_strip_stop(void)
     }
 
   g_strip_run = 0;
-  usleep(STRIP_STEP_US * 2);
+
+  /* 等 worker 真的退出再关灯，否则它可能在我们写 0% 之后又写一档亮度。
+   * idle 时最长睡 100 ms，join 最多也就等这么久。 */
+  pthread_join(g_strip_thread, NULL);
+
   led_strip_set_pct(0);
   PWM_REG(LED_PWM_PER) &= ~(1u << STRIP_PWM_CH);
 
+  led_strip_set_activity(0xffffffffu, 0);
   g_strip_started = 0;
 }

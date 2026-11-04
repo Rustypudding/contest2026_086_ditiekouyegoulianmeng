@@ -751,6 +751,22 @@ static void mqtt_sleep_handle(const char *to, int from_h, int to_h)
 #define MQTT_HIST_MAXSEQ  96      /* 片数上限（16384/256 最多 64 片） */
 #define MQTT_HIST_RETRY   150     /* 同一片最多重试 150 拍（200ms × 150 = 30s） */
 
+/* 外接灯带的「正在回传故事记录」位。真正的实现和位值在
+ * app/kid_buddy/led_strip.c / led_strip.h；FLAT 构建下两个 app 在同一个
+ * 地址空间，可以直接调。声明成 weak 是为了 ai_agent 单独编译/运行时
+ * 不会因为没有 kid_buddy 而链接失败。位值必须和 LED_STRIP_ACT_BOOK 一致。 */
+#define MQTT_LED_ACT_BOOK (1u << 1)
+
+extern void led_strip_set_activity(unsigned int activity, int on)
+    __attribute__((weak));
+
+static void mqtt_hist_led(int on)
+{
+    if (led_strip_set_activity != NULL) {
+        led_strip_set_activity(MQTT_LED_ACT_BOOK, on);
+    }
+}
+
 static pthread_mutex_t s_hist_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static char  *s_hist_buf   = NULL;   /* 整个历史 JSON（malloc 出来的） */
@@ -827,6 +843,7 @@ static void mqtt_hist_pump(void)
     /* 发完了（或者片数到了上限）：释放，收工 */
     if (s_hist_off >= s_hist_len || s_hist_seq >= s_hist_total) {
         syslog(LOG_INFO, "[%s] history: 发送完成，共 %d 片\n", TAG, s_hist_seq);
+        mqtt_hist_led(0);
         free(s_hist_buf);
         s_hist_buf = NULL;
         pthread_mutex_unlock(&s_hist_lock);
@@ -844,6 +861,7 @@ static void mqtt_hist_pump(void)
      * 反过来，回退会让某一片变短，len/RAW 算出来的 total 就少一片，
      * 最后几个字节被静默丢掉 —— JSON 直接不完整。 */
     if (n == 0) {
+        mqtt_hist_led(0);
         free(s_hist_buf);
         s_hist_buf = NULL;
         pthread_mutex_unlock(&s_hist_lock);
@@ -904,6 +922,7 @@ static void mqtt_hist_pump(void)
         syslog(LOG_ERR,
                "[%s] history: 第 %d/%d 片连续 %d 次失败，放弃这一批\n",
                TAG, seq + 1, total, s_hist_retry);
+        mqtt_hist_led(0);
         free(s_hist_buf);
         s_hist_buf = NULL;
         s_hist_retry = 0;
@@ -972,6 +991,11 @@ static void mqtt_hist_request(const char *to, const char *target)
     s_hist_to[sizeof(s_hist_to) - 1] = '\0';
     strncpy(s_hist_target, target, sizeof(s_hist_target) - 1);
     s_hist_target[sizeof(s_hist_target) - 1] = '\0';
+
+    /* 在锁内置位：pump 完成时会在同一把锁内清零，这样即使总片数只有
+     * 一两片、下一个 200ms 就发完，也不会出现「先清后置」把灯带卡在
+     * 呼吸状态。 */
+    mqtt_hist_led(1);
 
     pthread_mutex_unlock(&s_hist_lock);
 
@@ -1286,6 +1310,19 @@ void mqtt_channel_stop(void)
     for (int i = 0; i < 20 && !s_sync_thread_exited; i++) {
         usleep(100 * 1000);
     }
+
+    /* 停掉时如果故事记录还没发完，把缓冲释放掉，并清掉灯带的「正在
+     * 回传」位；否则 sync 线程没了，灯带会一直呼吸下去。 */
+    pthread_mutex_lock(&s_hist_lock);
+    if (s_hist_buf != NULL) {
+        syslog(LOG_INFO, "[%s] history: 停用时还有 %d/%d 片没发完，丢弃\n",
+               TAG, s_hist_seq, s_hist_total);
+        mqtt_hist_led(0);
+        free(s_hist_buf);
+        s_hist_buf = NULL;
+        s_hist_retry = 0;
+    }
+    pthread_mutex_unlock(&s_hist_lock);
 
     syslog(LOG_INFO, "[%s] MQTT channel stopped\n", TAG);
 }
